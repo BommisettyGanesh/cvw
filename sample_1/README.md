@@ -9,10 +9,11 @@ This directory (`sample_1`) contains the complete, self-contained SystemVerilog 
 1. [Directory Contents & File Inventory](#1-directory-contents--file-inventory)
 2. [Hardware Specifications (`my_minimal_rv32`)](#2-hardware-specifications-my_minimal_rv32)
 3. [Architecture Overview & RTL Hierarchy](#3-architecture-overview--rtl-hierarchy)
-4. [How to Attach an External Hardware Accelerator](#4-how-to-attach-an-external-hardware-accelerator)
-   - [Method 1: Memory-Mapped AHB-Lite Bus Attachment (Recommended)](#method-1-memory-mapped-ahb-lite-bus-attachment-recommended)
+4. [How to Attach External Peripherals & Hardware Accelerators](#4-how-to-attach-external-peripherals--hardware-accelerators)
+   - [Method 1: Memory-Mapped AHB-Lite Bus Attachment (Accelerator)](#method-1-memory-mapped-ahb-lite-bus-attachment-accelerator)
    - [Method 2: APB Peripheral Bus Attachment](#method-2-apb-peripheral-bus-attachment)
-   - [Writing Bare-Metal Software Drivers for the Accelerator](#writing-bare-metal-software-drivers-for-the-accelerator)
+   - [Method 3: Adding a General-Purpose AHB DMA Controller](#method-3-adding-a-general-purpose-ahb-dma-controller)
+   - [Writing Bare-Metal Software Drivers](#writing-bare-metal-software-drivers)
 5. [Complete RTL-to-GDSII ASIC Flow Guide](#5-complete-rtl-to-gdsii-asic-flow-guide)
    - [Phase 1: RTL Functional Verification & Linting](#phase-1-rtl-functional-verification--linting)
    - [Phase 2: Logic Synthesis (RTL → Gate-Level Netlist)](#phase-2-logic-synthesis-rtl--gate-level-netlist)
@@ -95,10 +96,12 @@ graph TD
             UART["UART 16550 (0x1000_0000)"]
             GPIO["GPIO (0x1000_2000)"]
             ACCEL["External Accelerator (MMIO)"]
+            DMA["DMA Controller (Master/Slave)"]
         end
     end
 
     EBU <--> AHB_BUS
+    DMA <--> AHB_BUS
     AHB_BUS <--> RAM
     AHB_BUS <--> BRIDGE
     BRIDGE <--> CLINT
@@ -106,15 +109,14 @@ graph TD
     BRIDGE <--> UART
     BRIDGE <--> GPIO
     BRIDGE <--> ACCEL
+    BRIDGE <--> DMA
 ```
 
 ---
 
-## 4. How to Attach an External Hardware Accelerator
+## 4. How to Attach External Peripherals & Hardware Accelerators
 
-An external hardware accelerator (such as a Matrix Multiplier, Cryptographic Engine, or Neural Network MAC array) connects to CORE-V-Wally using **Memory-Mapped I/O (MMIO)** over the 32-bit AHB-Lite or APB system bus.
-
-### Method 1: Memory-Mapped AHB-Lite Bus Attachment (Recommended)
+### Method 1: Memory-Mapped AHB-Lite Bus Attachment (Accelerator)
 
 An AHB-Lite slave accelerator connects directly to the 32-bit system bus for high throughput and low latency.
 
@@ -243,7 +245,135 @@ For low-power, lower-speed peripherals, connect to the APB bus downstream of `ah
 
 ---
 
-### Writing Bare-Metal Software Drivers for the Accelerator
+### Method 3: Adding a General-Purpose AHB DMA Controller
+
+A DMA Controller operates as a **dual-interface block**:
+1. **AHB Slave Interface**: CPU programs MMIO registers (`SRC_ADDR`, `DST_ADDR`, `LENGTH`, `CONTROL`) at MMIO base `0x1000_5000`.
+2. **AHB Master Interface**: DMA engine acquires bus mastership from the AHB arbiter (`ebu.sv`), autonomously reading from source memory and writing to target destination without CPU intervention.
+
+#### 1. DMA Controller Module Interface (`my_dma_controller_ahb.sv`)
+
+Create `src/uncore/my_dma_controller_ahb.sv`:
+
+```systemverilog
+// src/uncore/my_dma_controller_ahb.sv
+// Dual-Interface AHB-Lite DMA Controller (Slave Config + Master Transfer)
+
+module my_dma_controller_ahb (
+    input  logic        HCLK,
+    input  logic        HRESETn,
+
+    // --- AHB Slave Interface (CPU Configuration at 0x1000_5000) ---
+    input  logic        HSEL_S,
+    input  logic [31:0] HADDR_S,
+    input  logic [31:0] HWDATA_S,
+    input  logic        HWRITE_S,
+    input  logic [1:0]  HTRANS_S,
+    input  logic        HREADY_S,
+    output logic [31:0] HRDATA_S,
+    output logic        HREADYOUT_S,
+
+    // --- AHB Master Interface (Autonomous Bus Transfer) ---
+    output logic        HBUSREQ_M,
+    input  logic        HGRANT_M,
+    output logic [31:0] HADDR_M,
+    output logic [31:0] HWDATA_M,
+    output logic        HWRITE_M,
+    output logic [1:0]  HTRANS_M,
+    input  logic [31:0] HRDATA_M,
+    input  logic        HREADY_M,
+
+    // Interrupt signal to PLIC
+    output logic        dma_irq
+);
+
+    // MMIO Registers
+    // 0x00: SRC_ADDR  (Source Address)
+    // 0x04: DST_ADDR  (Destination Address)
+    // 0x08: LEN       (Transfer Length in words)
+    // 0x0C: CONTROL   (Bit 0: Start, Bit 1: Busy, Bit 2: Interrupt Enable)
+
+    logic [31:0] src_addr_reg, dst_addr_reg, len_reg, ctrl_reg;
+    logic [31:0] dma_buffer;
+    typedef enum logic [1:0] {IDLE, READ_SRC, WRITE_DST, DONE} state_t;
+    state_t state;
+
+    assign HREADYOUT_S = 1'b1;
+
+    // --- Slave Control Register Programming ---
+    always_ff @(posedge HCLK or negedge HRESETn) begin
+        if (!HRESETn) begin
+            src_addr_reg <= 32'h0;
+            dst_addr_reg <= 32'h0;
+            len_reg      <= 32'h0;
+            ctrl_reg     <= 32'h0;
+        end else if (HSEL_S & HWRITE_S & HTRANS_S[1]) begin
+            case (HADDR_S[3:0])
+                4'h0: src_addr_reg <= HWDATA_S;
+                4'h4: dst_addr_reg <= HWDATA_S;
+                4'h8: len_reg      <= HWDATA_S;
+                4'hC: ctrl_reg     <= HWDATA_S;
+            endcase
+        end
+    end
+
+    // --- Master FSM (Autonomous Transfer Engine) ---
+    always_ff @(posedge HCLK or negedge HRESETn) begin
+        if (!HRESETn) begin
+            state      <= IDLE;
+            HBUSREQ_M  <= 1'b0;
+            HWRITE_M   <= 1'b0;
+            HTRANS_M   <= 2'b00;
+            dma_irq    <= 1'b0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    if (ctrl_reg[0]) begin // Start bit set
+                        HBUSREQ_M <= 1'b1;
+                        state     <= READ_SRC;
+                    end
+                end
+
+                READ_SRC: begin
+                    if (HGRANT_M & HREADY_M) begin
+                        HADDR_M   <= src_addr_reg;
+                        HWRITE_M  <= 1'b0;
+                        HTRANS_M  <= 2'b10; // NONSEQ transfer
+                        dma_buffer <= HRDATA_M;
+                        state     <= WRITE_DST;
+                    end
+                end
+
+                WRITE_DST: begin
+                    if (HREADY_M) begin
+                        HADDR_M    <= dst_addr_reg;
+                        HWDATA_M   <= dma_buffer;
+                        HWRITE_M   <= 1'b1;
+                        HTRANS_M   <= 2'b10;
+                        src_addr_reg <= src_addr_reg + 4;
+                        dst_addr_reg <= dst_addr_reg + 4;
+                        len_reg      <= len_reg - 1;
+                        if (len_reg <= 1) state <= DONE;
+                        else              state <= READ_SRC;
+                    end
+                end
+
+                DONE: begin
+                    HBUSREQ_M <= 1'b0;
+                    HTRANS_M  <= 2'b00;
+                    dma_irq   <= ctrl_reg[2]; // Trigger PLIC IRQ
+                    state     <= IDLE;
+                end
+            endcase
+        end
+    end
+
+endmodule
+```
+
+---
+
+### Writing Bare-Metal Software Drivers
 
 In your C application (`main.c`):
 
@@ -254,18 +384,26 @@ In your C application (`main.c`):
 #define ACCEL_DATA_IN  (*(volatile unsigned int *)(ACCEL_BASE + 0x08))
 #define ACCEL_RESULT   (*(volatile unsigned int *)(ACCEL_BASE + 0x0C))
 
+#define DMA_BASE       0x10005000
+#define DMA_SRC        (*(volatile unsigned int *)(DMA_BASE + 0x00))
+#define DMA_DST        (*(volatile unsigned int *)(DMA_BASE + 0x04))
+#define DMA_LEN        (*(volatile unsigned int *)(DMA_BASE + 0x08))
+#define DMA_CTRL       (*(volatile unsigned int *)(DMA_BASE + 0x0C))
+
+// Trigger hardware accelerator
 unsigned int run_accelerator(unsigned int value) {
-    // 1. Write operand to accelerator
     ACCEL_DATA_IN = value;
-
-    // 2. Start accelerator execution
     ACCEL_CTRL = 0x1;
-
-    // 3. Poll status register or await PLIC interrupt
     while ((ACCEL_STATUS & 0x1) == 0);
-
-    // 4. Return hardware result
     return ACCEL_RESULT;
+}
+
+// Trigger autonomous DMA transfer
+void dma_transfer(unsigned int src, unsigned int dst, unsigned int word_count) {
+    DMA_SRC  = src;
+    DMA_DST  = dst;
+    DMA_LEN  = word_count;
+    DMA_CTRL = 0x5; // Bit 0: Start, Bit 2: Interrupt Enable
 }
 ```
 
