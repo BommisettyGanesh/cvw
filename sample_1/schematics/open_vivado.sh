@@ -5,7 +5,16 @@
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJ_XPR="$SCRIPT_DIR/my_minimal_rv32_schematic/my_minimal_rv32_schematic.xpr"
+
+echo "=========================================================================="
+echo "Cleaning up old Vivado logs, journals, trace files, and temporary files..."
+echo "=========================================================================="
+rm -rf "$SCRIPT_DIR"/vivado*.log \
+       "$SCRIPT_DIR"/vivado*.jou \
+       "$SCRIPT_DIR"/vivado*.str \
+       "$SCRIPT_DIR"/*.backup.log \
+       "$SCRIPT_DIR"/*.backup.jou \
+       "$SCRIPT_DIR"/.Xil
 
 # Find Vivado executable
 VIVADO_BIN="$(which vivado 2>/dev/null)"
@@ -27,4 +36,5 @@ echo "==========================================================================
 
 # Automatically sync files and open RTL Schematic in GUI mode
 echo "Opening Vivado GUI with dynamic RTL Schematic elaboration..."
+cd "$SCRIPT_DIR"
 "$VIVADO_BIN" -mode gui -source "$SCRIPT_DIR/update_and_elaborate.tcl" &
