@@ -20,12 +20,14 @@ echo "Executing Wally setup.sh"
 # Path to RISC-V Tools
 if [ -d ~/riscv ]; then
     export RISCV=~/riscv
+elif [ -d ~/cvw ]; then
+    export RISCV=~/cvw
 elif [ -d /opt/riscv ]; then
     export RISCV=/opt/riscv
 else
     # set the $RISCV directory here and remove the subsequent two lines
     # export RISCV=
-    echo -e "${FAIL_COLOR}\$RISCV directory not found. Checked /opt/riscv and ~/riscv. Edit setup.sh to point to your custom \$RISCV directory.${ENDC}"
+    echo -e "${FAIL_COLOR}\$RISCV directory not found. Checked /opt/riscv, ~/cvw, and ~/riscv. Edit setup.sh to point to your custom \$RISCV directory.${ENDC}"
     return 1
 fi
 echo \$RISCV set to "${RISCV}"
@@ -48,6 +50,9 @@ else
     echo -e "${FAIL_COLOR}site-setup.sh not found in \$RISCV directory. Rerun wally-toolchain-install.sh to automatically download it.${ENDC}"
     return 1
 fi
+
+# Ensure Wally utility functions have highest priority in PATH
+export PATH=$WALLY/bin:$PATH
 
 if [ ! -e "${WALLY}/.git/hooks/pre-commit" ]; then
     pushd "${WALLY}" || return 1
