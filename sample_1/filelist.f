@@ -21,8 +21,10 @@ src/uncore/spi_controller.sv
 src/uncore/spi_fifo.sv
 src/uncore/trickbox_apb.sv
 src/uncore/uartPC16550D.sv
+src/uncore/multiplier_accel_ahb.sv
 src/uncore/uart_apb.sv
 src/uncore/uncore.sv
+
 
 // Generic Memory Primitives
 src/generic/mem/*.sv
