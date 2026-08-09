@@ -62,9 +62,9 @@ puts "Re-elaborating RTL Schematic Design to reflect config.vh feature changes..
 puts "Top Module: wallypipelinedsocwrapper"
 puts "=========================================================================="
 
-# Force re-elaboration of RTL design
+# Re-elaborate RTL design
 close_design -quiet
-synth_design -rtl -name rtl_1 -force
+synth_design -rtl -name rtl_1
 
 puts "=========================================================================="
 puts "RTL Schematic Updated Successfully!"
