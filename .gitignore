@@ -191,3 +191,8 @@ vivado*.log
 vivado*.jou
 vivado*.str
 .Xil/
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.wdf
