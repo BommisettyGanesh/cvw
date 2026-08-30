@@ -31,7 +31,29 @@ This directory (`1tops_soc`) contains the complete, self-contained SystemVerilog
 
 ---
 
-## 2. Hardware Specifications
+## 2. Features & Hardware Specifications
+
+### Core Architecture
+* **ISA**: 32-bit RISC-V Base Integer Instruction Set (`RV32I`).
+* **Pipeline**: 5-stage in-order pipeline (Fetch, Decode, Execute, Memory, Writeback).
+* **Execution Mode**: Bare-metal Machine Mode (`M-mode`) only, optimized for deeply embedded control tasks without the overhead of User or Supervisor modes.
+* **Prefetch**: 2KB instruction prefetch buffer to hide memory latency during sequential execution.
+
+### Memory System
+* **Instruction Memory**: 16 KB on-chip SRAM mapped at `0x8000_0000`.
+* **Data Memory**: 16 KB on-chip SRAM mapped at `0x8000_0000` (Unified physically, split logically or accessed via arbitration).
+* **Boot ROM**: 4 KB on-chip ROM mapped at `0x0000_1000` for initial boot sequence and reset vectors.
+
+### Peripherals & Interrupts
+* **CLINT (Timer)**: Core Local Interruptor providing standard RISC-V timer (`mtime`/`mtimecmp`) and software interrupts. Mapped at `0x0200_0000`.
+* **PLIC (External)**: Platform-Level Interrupt Controller for routing external peripheral interrupts to the core. Mapped at `0x0C00_0000`.
+* **UART**: Industry-standard 16550D UART for serial communication and console debugging. Mapped at `0x1000_0000`.
+* **GPIO**: 32-pin General Purpose I/O controller for bit-banging and simple external signaling. Mapped at `0x1000_2000`.
+* **SPI**: Serial Peripheral Interface controller for interacting with external sensors or flash memory. Mapped at `0x1004_0000`.
+
+### Accelerator & Debug Capabilities
+* **Convolutional Tsetlin Machine Accelerator**: A dedicated 16MB external memory space (`0x3000_0000` - `0x30FF_FFFF`) is mapped directly to the top-level AHB bus via `HSELEXT`, allowing the CPU to seamlessly configure and control an external accelerator without routing through complex bus bridges.
+* **Custom Debug Unit**: A dedicated APB slot (`PSEL[5]` at `0x0A00_0000`) is reserved as a placeholder for a custom hardware debug unit.
 
 | Parameter | Setting | Description |
 | :--- | :--- | :--- |
