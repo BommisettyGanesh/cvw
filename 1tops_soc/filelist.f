@@ -29,15 +29,12 @@ src/uncore/uncore.sv
 src/generic/mem/*.sv
 
 // Core Submodules
-src/cache/*.sv
 src/ebu/*.sv
-src/fpu/*.sv
 src/hazard/*.sv
 src/ieu/*.sv
 src/ifu/*.sv
 src/ifu/bpred/*.sv
 src/lsu/*.sv
-src/mdu/*.sv
 src/mmu/*.sv
 src/privileged/*.sv
 
