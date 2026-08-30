@@ -58,43 +58,33 @@ This directory (`1tops_soc`) contains the complete, self-contained SystemVerilog
 
 ## 3. Architecture Overview & RTL Hierarchy
 
-```mermaid
-graph TD
-    subgraph SoC["wallypipelinedsoc (src/wally/wallypipelinedsoc.sv)"]
-        subgraph CPU["wallypipelinedcore (src/wally/wallypipelinedcore.sv)"]
-            IFU["IFU (Fetch)"]
-            IEU["IEU (Decode, ALU, Regfile)"]
-            LSU["LSU (Load/Store)"]
-            PRIV["Privileged (CSRs & Traps)"]
-            HAZ["Hazard Controller"]
-            EBU["EBU (AHB Master Arbiter)"]
-        end
-
-        subgraph Uncore["uncore (src/uncore/uncore.sv)"]
-            AHB_BUS["32-Bit AHB-Lite Bus"]
-            RAM["16KB I/D SRAM"]
-            ROM["4KB BootROM"]
-            BRIDGE["AHB-to-APB Bridge"]
-            CLINT["CLINT"]
-            PLIC["PLIC"]
-            UART["UART 16550"]
-            GPIO["GPIO"]
-            SPI["SPI"]
-            DEBUG["Debug Unit Placeholder (0x0A00_0000)"]
-        end
-    end
-
-    EBU <--> AHB_BUS
-    AHB_BUS <--> RAM
-    AHB_BUS <--> ROM
-    AHB_BUS <--> BRIDGE
-    BRIDGE <--> CLINT
-    BRIDGE <--> PLIC
-    BRIDGE <--> UART
-    BRIDGE <--> GPIO
-    BRIDGE <--> SPI
-    BRIDGE <--> DEBUG
-    AHB_BUS <--> TSETLIN["Tsetlin Machine (0x3000_0000) External AHB"]
+```text
++-------------------------------------------------------------------------+
+|                    wallypipelinedsoc (Top-Level)                        |
+|                                                                         |
+|  +--------------------------------+   +------------------------------+  |
+|  |       wallypipelinedcore       |   |            uncore            |  |
+|  |                                |   |                              |  |
+|  |  +-----+  +-----+  +-----+     |   |  +------------------------+  |  |
+|  |  | IFU |  | IEU |  | LSU |     |   |  |     32-Bit AHB Bus     |  |  |
+|  |  +-----+  +-----+  +-----+     |   |  +------------------------+  |  |
+|  |                                |   |     |       |       |        |  |
+|  |  +------+ +-------+ +-----+    |   | +------+ +------+ +--------+ |  |
+|  |  | PRIV | | HAZ   | | EBU |<========>| RAM  | | ROM  | | BRIDGE | |  |
+|  |  +------+ +-------+ +-----+    |   | | 16KB | | 4KB  | | (APB)  | |  |
+|  +--------------------------------+   | +------+ +------+ +--------+ |  |
+|                                       |                        |     |  |
+|                                       |  +-------+ +------+ +------+ |  |
+|                                       |  | CLINT | | PLIC | | UART | |  |
+|                                       |  +-------+ +------+ +------+ |  |
+|                                       |  | GPIO  | | SPI  | | DEBUG| |  |
+|                                       |  +-------+ +------+ +------+ |  |
+|                                       +------------------------------+  |
++-------------------------------------------------------------------------+
+                                || External AHB (0x3000_0000)
+                    +------------------------------------+
+                    |  Convolutional Tsetlin Machine     |
+                    +------------------------------------+
 ```
 
 ---
@@ -117,16 +107,32 @@ In `src/uncore/uncore.sv`, look for the `debug_unit` block. You can connect your
 
 Below is the industrial implementation workflow for converting `sample_1` into silicon tapeout files (`GDSII` / `OASIS`).
 
-```mermaid
-flowchart TD
-    A["RTL Source (sample_1)"] --> B["Phase 1: Verification & Linting<br/>(Verilator / Spyglass)"]
-    B --> C["Phase 2: Logic Synthesis<br/>(Design Compiler / Genus + SDC + Lib)"]
-    C --> D["Gate-Level Netlist (.v) & SDC"]
-    D --> E["Phase 3: Formal Verification & GLS<br/>(Formality / Conformal / XSim)"]
-    E --> F["Phase 4: Place & Route (P&R)<br/>(Innovus / ICC2 / OpenROAD)"]
-    F --> G["Floorplan -> Power Grid -> Placement -> CTS -> Route"]
-    G --> H["Phase 5: Signoff Verification<br/>(PrimeTime STA + Calibre DRC/LVS)"]
-    H --> I["GDSII / OASIS Tapeout File"]
+```text
+[ RTL Source (1tops_soc) ]
+           |
+           v
+[ Phase 1: Verification & Linting ] (Verilator / Spyglass)
+           |
+           v
+[ Phase 2: Logic Synthesis ] (Design Compiler / Genus + SDC + Lib)
+           |
+           v
+[ Gate-Level Netlist (.v) & SDC ]
+           |
+           v
+[ Phase 3: Formal Verification & GLS ] (Formality / Conformal / XSim)
+           |
+           v
+[ Phase 4: Place & Route (P&R) ] (Innovus / ICC2 / OpenROAD)
+           |
+           v
+[ Floorplan -> Power Grid -> Placement -> CTS -> Route ]
+           |
+           v
+[ Phase 5: Signoff Verification ] (PrimeTime STA + Calibre DRC/LVS)
+           |
+           v
+[ GDSII / OASIS Tapeout File ]
 ```
 
 ---
