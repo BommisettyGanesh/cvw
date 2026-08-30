@@ -166,12 +166,14 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
     assign SPIOut = 1'b0; assign SPICS = '0; assign SPIIntr = 1'b0; assign SPICLK = 1'b0;
   end
 
-  if (P.SDC_SUPPORTED == 1) begin : sdc
-    spi_apb #(P) sdc(
-      .PCLK, .PRESETn, .PSEL(PSEL[5]), .PADDR(PADDR[7:0]), .PWDATA, .PSTRB, .PWRITE, .PENABLE,
-      .PREADY(PREADY[5]), .PRDATA(PRDATA[5]),
-      .SPIOut(SDCCmd), .SPIIn(SDCIn), .SPICS(SDCCS), .SPICLK(SDCCLK), .SPIIntr(SDCIntr));
-  end else begin : sdc
+  if (P.SDC_SUPPORTED == 1) begin : debug_unit
+    // Placeholder for Custom Debug Unit on APB bus (repurposing SDC slot)
+    // You can attach your debug module to PSEL[5], PADDR, PWDATA, etc.
+    assign PREADY[5] = 1'b1;
+    assign PRDATA[5] = 32'h0;
+    assign SDCCmd = '0; assign SDCCS = 4'b0; assign SDCIntr = 1'b0; assign SDCCLK = 1'b0;
+  end else begin : debug_unit
+    assign PREADY[5] = 1'b1; assign PRDATA[5] = 32'h0;
     assign SDCCmd = '0; assign SDCCS = 4'b0; assign SDCIntr = 1'b0; assign SDCCLK = 1'b0;
   end
 

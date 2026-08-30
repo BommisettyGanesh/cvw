@@ -182,8 +182,9 @@ localparam logic [63:0] UART_RANGE       = 64'h00000007;
 localparam logic PLIC_SUPPORTED = 1;
 localparam logic [63:0] PLIC_BASE        = 64'h0C000000;
 localparam logic [63:0] PLIC_RANGE       = 64'h03FFFFFF;
-localparam logic SDC_SUPPORTED = 0;
-localparam logic [63:0] SDC_BASE         = 64'h00013000;
+// Debug Unit Space (Repurposing unused SDC space on APB bus)
+localparam logic SDC_SUPPORTED = 1;
+localparam logic [63:0] SDC_BASE         = 64'h0A000000;
 localparam logic [63:0] SDC_RANGE        = 64'h00000FFF;
 localparam logic SPI_SUPPORTED = 1;
 localparam logic [63:0] SPI_BASE         = 64'h10040000;
