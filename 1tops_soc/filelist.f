@@ -41,3 +41,4 @@ src/privileged/*.sv
 // Top Level Modules
 src/wally/wallypipelinedcore.sv
 src/wally/wallypipelinedsoc.sv
+src/accelerator/*.sv

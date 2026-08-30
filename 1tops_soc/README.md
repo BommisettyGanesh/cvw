@@ -10,6 +10,7 @@ This directory (`1tops_soc`) contains the complete, self-contained SystemVerilog
 2. [Hardware Specifications](#2-hardware-specifications)
 3. [Architecture Overview & RTL Hierarchy](#3-architecture-overview--rtl-hierarchy)
 4. [Tsetlin Machine Accelerator & Debug Unit Integration](#4-tsetlin-machine-accelerator--debug-unit-integration)
+5. [Software C-Compilation & Verilator Simulation](#5-software-c-compilation--verilator-simulation)
 
 
 ---
@@ -107,14 +108,48 @@ This directory (`1tops_soc`) contains the complete, self-contained SystemVerilog
 
 ## 4. Tsetlin Machine Accelerator & Debug Unit Integration
 
-### Tsetlin Machine Integration
+### Tsetlin Machine Integration (`0x3000_0000`)
 The system is explicitly designed to act as a bare-metal controller for an external Convolutional Tsetlin Machine.
 The accelerator space is mapped to `0x3000_0000` - `0x30FF_FFFF` (16MB).
 Because it uses the `EXT_MEM` parameter configuration, any memory access by the core to this region is automatically routed out of the top-level `wallypipelinedsoc.sv` module via the `HSELEXT` and `HRDATAEXT` pins.
-You simply instantiate your Tsetlin Machine alongside `wallypipelinedsoc` and connect it to these exported AHB signals. No core modifications are required!
+
+We have provided a template accelerator and testbench to show how this is connected:
+- **`src/accelerator/tsetlin_ahb_wrapper.sv`**: A mock SystemVerilog AHB peripheral mapped to `0x3000_0000`. You should put your actual Tsetlin Machine logic in this file (or replace it).
+- **`filelist.f`**: This manifest includes `src/accelerator/*.sv` so your accelerator is automatically picked up by Vivado and Verilator.
+- **`testbench/tb.sv`**: This is the top-level testbench that instantiates both `wallypipelinedsoc` and `tsetlin_ahb_wrapper`, connecting the exported AHB pins (`HSELEXT`, `HADDREXT`, etc.) directly to the accelerator.
 
 ### Debug Unit Integration
 The `SDC` APB peripheral slot has been repurposed as a placeholder for a custom Debug Unit.
 In `src/uncore/uncore.sv`, look for the `debug_unit` block. You can connect your custom debug module directly to the APB bus signals `PSEL[5]`, `PADDR`, `PWDATA`, and `PRDATA[5]` located there.
 
 ---
+
+## 5. Software C-Compilation & Verilator Simulation
+
+This repository includes a bare-metal C toolchain scaffold and a Verilator simulator driver so you can write C code, compile it, and run it against the RTL (and your accelerator).
+
+### 1. Writing C Code (`software/`)
+The `software/` directory contains everything you need to write and compile code for the `1tops_soc`:
+- `main.c`: Your main application. It demonstrates how to print to the UART (`0x1000_0000`) and how to read/write memory-mapped registers in the Tsetlin Accelerator (`0x3000_0000`).
+- `link.ld`: A minimal linker script mapping code and data directly to the 16KB SRAM block.
+- `crt0.S`: Assembly startup script to initialize the stack and jump to `main`.
+- `Makefile`: Uses `riscv64-unknown-elf-gcc` to compile the C files and generates a `test.mem` hex file.
+
+### 2. Simulating with Verilator (`testbench/`)
+The `testbench/` directory contains a complete simulation environment.
+
+**Prerequisites:**
+You need `verilator` and `riscv64-unknown-elf-gcc` installed on your machine.
+
+**Running the Simulation:**
+Navigate to the testbench directory and run `make run`:
+```bash
+cd testbench
+make run
+```
+
+**What happens when you type `make run`:**
+1. It builds the Verilator C++ model of `tb.sv` (which includes the SoC and the Accelerator).
+2. It copies the `software/test.mem` (your compiled C code) into the testbench directory.
+3. It runs the simulation. The internal `ram1p1rwbe.sv` memory module uses `$readmemh("test.mem")` to preload your C code into the 16KB SRAM.
+4. The simulation executes, and a `trace.vcd` waveform is generated for debugging in GTKWave!

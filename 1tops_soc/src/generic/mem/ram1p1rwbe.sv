@@ -93,20 +93,15 @@ module ram1p1rwbe import cvw::*; #(parameter USE_SRAM=0, DEPTH=64, WIDTH=44, PRE
       import "DPI-C" function string getenvval(input string env_name);
     `endif
 
-    initial
+    initial begin
       if (PRELOAD_ENABLED) begin
-        if (WIDTH == 64) begin
-          `ifdef VERILATOR
-            // because Verilator doesn't automatically accept $WALLY from shell
-            string       WALLY_DIR = getenvval("WALLY");
-            $readmemh({WALLY_DIR,"/fpga/src/data.mem"}, RAM, 0);  // load boot RAM for FPGA
-          `else
-            $readmemh({"$WALLY/fpga/src/data.mem"}, RAM, 0);  // load boot RAM for FPGA
-          `endif
+        if (WIDTH == 64 || WIDTH == 32) begin
+          $readmemh("test.mem", RAM, 0);  // load unified boot RAM for simulation
         end else begin // put something in the RAM so it is not optimized away
-        RAM[0] = 'h00002197;
+          RAM[0] = 'h00002197;
         end
       end
+    end
 
     // Combinational read: register address and read after clock edge
     logic [$clog2(DEPTH)-1:0] addrd;

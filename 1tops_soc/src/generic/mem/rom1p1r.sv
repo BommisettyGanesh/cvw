@@ -47,20 +47,9 @@ module rom1p1r #(parameter ADDR_WIDTH = 8, DATA_WIDTH = 32, PRELOAD_ENABLED = 0)
 
   end else begin */
 
-  `ifdef VERILATOR
-    import "DPI-C" function string getenvval(input string env_name);
-  `endif
-
-  initial
-    if (PRELOAD_ENABLED) begin
-      if (DATA_WIDTH == 64) begin
-        `ifdef VERILATOR
-            // because Verilator doesn't automatically accept $WALLY from shell
-            string       WALLY_DIR = getenvval("WALLY");
-            $readmemh({WALLY_DIR,"/fpga/src/boot.mem"}, ROM, 0);  // load boot ROM for FPGA
-        `else
-            $readmemh({"$WALLY/fpga/src/boot.mem"}, ROM, 0);  // load boot ROM for FPGA
-        `endif
+    initial begin
+      if (PRELOAD_ENABLED) begin
+        $readmemh("test.mem", ROM, 0);  // load unified boot ROM for simulation
       end else begin // put something in the ROM so it is not optimized away
         ROM[0] = 'h00002197;
       end
