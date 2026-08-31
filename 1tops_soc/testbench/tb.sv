@@ -1,6 +1,10 @@
-module tb;
-  logic clk;
-  logic reset;
+module tb(
+  input logic clk,
+  input logic reset
+);
+  import cvw::*;
+  `include "config.vh"
+  `include "parameter-defs.vh"
 
   // External AHB Interface
   logic [31:0] HRDATAEXT;
@@ -16,10 +20,10 @@ module tb;
   logic [1:0]  HTRANSEXT;
   logic        HMASTLOCKEXT;
 
+
+
   // SoC Instantiation
-  wallypipelinedsoc #(
-    .ASIC(0)
-  ) soc (
+  wallypipelinedsoc #(P) soc (
     .clk(clk),
     .reset_ext(reset),
     .HRDATAEXT(HRDATAEXT),
@@ -37,8 +41,8 @@ module tb;
     .ExternalStall(1'b0)
   );
 
-  // Convolutional Tsetlin Machine Accelerator Wrapper
-  tsetlin_ahb_wrapper #(
+  // Multiplier AHB Slave (Temporary stand-in for Tsetlin Machine)
+  multiplier_ahb #(
     .XLEN(32)
   ) accel (
     .clk(clk),
@@ -56,17 +60,5 @@ module tb;
     .HRESP(HRESPEXT),
     .HRDATA(HRDATAEXT)
   );
-
-  // Clock Generation
-  initial begin
-    clk = 0;
-    forever #5 clk = ~clk;
-  end
-
-  // Dump logic for Verilator
-  initial begin
-    $dumpfile("trace.vcd");
-    $dumpvars(0, tb);
-  end
 
 endmodule

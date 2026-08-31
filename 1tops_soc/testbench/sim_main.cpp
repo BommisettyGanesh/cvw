@@ -13,20 +13,19 @@ int main(int argc, char** argv) {
     tfp->open("trace.vcd");
 
     // Reset sequence
+    // Assert reset for 10 cycles
     tb->reset = 1;
-    tb->clk = 0;
-
-    for (int i=0; i<10; i++) {
-        tb->clk = !tb->clk;
+    for(int i=0; i<10; i++) {
+        tb->clk = 0;
         tb->eval();
-        tfp->dump(i*5);
+        tb->clk = 1;
+        tb->eval();
     }
-
     tb->reset = 0;
 
     int time = 50;
     // Run simulation for a set number of cycles (or until completion logic if added)
-    for (int i=0; i<5000; i++) {
+    for (int i=0; i<100000; i++) {
         tb->clk = !tb->clk;
         tb->eval();
         tfp->dump(time);
@@ -37,4 +36,9 @@ int main(int argc, char** argv) {
     tfp->close();
     delete tb;
     return 0;
+}
+
+extern "C" const char* getenvval(const char* env_name) {
+    const char* val = std::getenv(env_name);
+    return val ? val : "";
 }

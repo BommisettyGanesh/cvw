@@ -26,9 +26,9 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 module aesinvshiftrows64(
-   /* verilator lint_off UNUSEDSIGNAL */
+   /* verilator lint_off UNUSED */
    input  logic [127:0] a,
-   /* verilator lint_on UNUSEDSIGNAL */
+   /* verilator lint_on UNUSED */
    output logic [63:0]  y
 );
 

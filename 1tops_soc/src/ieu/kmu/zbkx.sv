@@ -32,9 +32,9 @@ module zbkx #(parameter WIDTH=32) (
 );
 
   logic [WIDTH-1:0]         xperm4, xperm8;
-  /* verilator lint_off UNUSEDSIGNAL */
+  /* verilator lint_off UNUSED */
   logic [WIDTH-1:0]         xperm4lookup, xperm8lookup; // not all bits are used
-  /* verilator lint_on UNUSEDSIGNAL */
+  /* verilator lint_on UNUSED */
   int                       i;
 
   always_comb begin

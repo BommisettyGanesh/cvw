@@ -5,7 +5,7 @@ INC_DIRS = -I../src/wally -I../src/uncore -I../src/generic/mem -I../src/accelera
 all: sim
 
 sim:
-	$(VERILATOR) $(VFLAGS) $(INC_DIRS) sim_main.cpp tb.sv
+	cd .. && $(VERILATOR) -Wall -Wno-fatal --trace -cc --exe -f filelist.f --top-module tb -Isrc/wally -Isrc/uncore -Isrc/generic/mem -Isrc/accelerator -Iconfig -Mdir testbench/obj_dir $(CURDIR)/sim_main.cpp $(CURDIR)/tb.sv
 	make -j -C obj_dir -f Vtb.mk Vtb
 
 run: sim

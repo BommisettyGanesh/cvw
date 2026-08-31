@@ -1,4 +1,4 @@
-module tsetlin_ahb_wrapper #(
+module multiplier_ahb #(
   parameter XLEN = 32
 ) (
   input  logic            clk,
@@ -35,28 +35,42 @@ module tsetlin_ahb_wrapper #(
     end
   end
 
-  // Dummy registers to simulate Tsetlin Machine
-  logic [31:0] config_reg;
+  // Registers for multiplier operands
+  logic [31:0] operand_a;
+  logic [31:0] operand_b;
+  logic [31:0] product;
 
-  always_ff @(posedge clk) begin
+  always_ff @(posedge clk or posedge reset) begin
     if (reset) begin
-        config_reg <= '0;
-    end else if (write_en && addr_reg[7:0] == 8'h00) begin
-        config_reg <= HWDATA;
+      operand_a <= 0;
+      operand_b <= 0;
+    end else if (write_en) begin
+      if (addr_reg[7:0] == 8'h00)
+        operand_a <= HWDATA;
+      else if (addr_reg[7:0] == 8'h04)
+        operand_b <= HWDATA;
+      else if (addr_reg[7:0] == 8'h0C) begin
+        if (HWDATA[7:0] == 8'h0A) begin
+            $display(""); // Print newline and flush
+        end else begin
+            $write("%c", HWDATA[7:0]);
+        end
+      end
     end
   end
 
+  // Simple combinational multiplication
+  assign product = operand_a * operand_b;
+
   always_comb begin
-    HREADYOUT = 1'b1; // Always ready (no wait states in this mock)
+    HREADYOUT = 1'b1; // Always ready (1-cycle combinational multiply)
     HRESP = 1'b0;     // OKAY response
     HRDATA = '0;
 
     if (read_en) begin
-      if (addr_reg[7:0] == 8'h00) begin
-          HRDATA = config_reg;
-      end else if (addr_reg[7:0] == 8'h04) begin
-          HRDATA = 32'hCAFEBABE; // Return magic status indicating accelerator is alive
-      end
+      if (addr_reg[7:0] == 8'h00) HRDATA = operand_a;
+      else if (addr_reg[7:0] == 8'h04) HRDATA = operand_b;
+      else if (addr_reg[7:0] == 8'h08) HRDATA = product;
     end
   end
 
