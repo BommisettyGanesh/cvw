@@ -38,7 +38,12 @@ module tb(
     .HPROT(HPROTEXT),
     .HTRANS(HTRANSEXT),
     .HMASTLOCK(HMASTLOCKEXT),
-    .ExternalStall(1'b0)
+    .ExternalStall(1'b0),
+    .TIMECLK(1'b0),
+    .GPIOIN(32'h0),
+    .UARTSin(1'b1), // UART idle high
+    .SPIIn(1'b0),
+    .SDCIn(1'b0)
   );
 
   // Multiplier AHB Slave (Temporary stand-in for Tsetlin Machine)

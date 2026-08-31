@@ -7,23 +7,33 @@ This repository contains the RTL code and documentation for the **1TOPS SoC**, w
 The SoC leverages an **AHB-Lite** interconnect to map the core, uncore peripherals, and custom hardware accelerators.
 
 ```text
-               +-----------------------------------------------------+
-               |                                                     |
-               |                Wally Pipelined Core                 |
-               |                  (RISC-V rv32i)                     |
-               |                                                     |
-               +--------------------------+--------------------------+
-                                          |
-                                    AHB-Lite Bus
-                                          |
-         +--------------------+-----------+-----------+--------------------+
-         |                    |                       |                    |
-+--------+-------+   +--------+-------+      +--------+-------+   +--------+-------+
-|                |   |                |      |                |   |                |
-|   Boot ROM     |   |  Unified RAM   |      |  Peripherals   |   |   AHB Slave    |
-| (0x0000_1000)  |   | (0x8000_0000)  |      |     (UART)     |   | (Accelerator)  |
-|                |   |                |      | (0x1000_0000)  |   | (0x3000_0000)  |
-+----------------+   +----------------+      +----------------+   +----------------+
+               +-------------------------------------------------------------+
+               |                                                             |
+               |                     Wally Pipelined Core                    |
+               |                        (RISC-V rv32i)                       |
+               |                                                             |
+               +------------------------------+------------------------------+
+                                              |
+                                        AHB-Lite Bus
+                                              |
+     +-----------------+----------------------+-------------------+--------------------+
+     |                 |                                          |                    |
++----+----+       +----+----+                                +----+----+          +----+----+
+|  Boot   |       | Unified |                                | AHB-to- |          |   EXT   |
+|  ROM    |       |   RAM   |                                |   APB   |          |   AHB   |
+|(0x1000) |       |(0x8000_)|                                | Bridge  |          |(0x3000_)|
+|         |       |  0000   |                                |         |          |  0000   |
++---------+       +---------+                                +----+----+          +---------+
+                                                                  |
+                                                               APB Bus
+                                                                  |
+           +------------+------------+------------+---------------+---------------+
+           |            |            |            |               |               |
+      +----+----+  +----+----+  +----+----+  +----+----+     +----+----+     +----+----+
+      |  UART   |  |  GPIO   |  |   SPI   |  |   SDC   |     |  CLINT  |     |  PLIC   |
+      |(0x1000_)|  |(0x1006_)|  |(0x1004_)|  |(0x0A00_)|     |(0x0200_)|     |(0x0C00_)|
+      |  0000   |  |  0000   |  |  0000   |  |  0000   |     |  0000   |     |  0000   |
+      +---------+  +---------+  +---------+  +---------+     +---------+     +---------+
 ```
 
 ## Features
@@ -78,7 +88,10 @@ make test
 This master script will:
 - Clean and compile your `main.c` into a `test.mem` hex file.
 - Clean and compile the Verilator hardware simulation model.
-- Automatically execute the testbench simulation and print the C code UART outputs directly to your terminal.
+- Automatically execute the testbench simulation and print the C code outputs directly to your terminal.
+
+> [!NOTE]
+> **Full SoC Simulation**: Although the software prints output by directly addressing the accelerator (at `0x3000_000C`) for testing simplicity, the Verilator simulation includes the **entire Wally pipelined SoC**. All standard peripherals defined in `config.vh` (PLIC, CLINT, UART, GPIO, SPI, etc.) remain intact and fully simulated within the uncore.
 
 ## Viewing in Vivado
 
