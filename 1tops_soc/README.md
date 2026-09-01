@@ -19,7 +19,7 @@ The SoC leverages an **AHB-Lite** interconnect to map the core, uncore periphera
      +-----------------+----------------------+-------------------+--------------------+
      |                 |                                          |                    |
 +----+----+       +----+----+                                +----+----+          +----+----+
-|  Boot   |       | Unified |                                | AHB-to- |          |   EXT   |
+|  Boot   |       | Unified |                                | AHB-to- |          | Internal|
 |  ROM    |       |   RAM   |                                |   APB   |          |   AHB   |
 |(0x1000) |       |(0x8000_)|                                | Bridge  |          |(0x3000_)|
 |         |       |  0000   |                                |         |          |  0000   |
@@ -57,11 +57,11 @@ In this architecture, instruction and data accesses are isolated within the core
 
 ## Integrating an Accelerator
 
-Custom accelerators are integrated into the SoC as **AHB Slaves**. The SoC exposes an external AHB interface out of the top-level module specifically for this purpose.
+Custom accelerators are integrated directly into the SoC pipeline as **AHB Slaves**. The SoC internally routes an AHB interface dedicated specifically for this purpose.
 
 1. **AHB Slave Interface**: Create a SystemVerilog module with an AHB slave interface (like `src/accelerator/multiplier_ahb.sv`).
-2. **Integration**: Instantiate the module inside the top-level `testbench/tb.sv` (or equivalent top-level SoC wrapper).
-3. **Connecting Ports**: Connect the AHB slave ports to the SoC's exposed `H*EXT` signals (e.g., `HADDREXT`, `HWDATATAEXT`, `HSELEXT`).
+2. **Integration**: Instantiate the module directly inside the core SoC wrapper (`src/wally/wallypipelinedsoc.sv`).
+3. **Connecting Ports**: Connect the AHB slave ports to the SoC's internal `H*EXT` signals (e.g., `HRDATAEXT`, `HSELEXT`).
 4. **Memory Address**: Access the accelerator in software using pointers to the base address `0x3000_0000`.
 
 ## Debug Unit

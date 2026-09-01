@@ -32,9 +32,7 @@ module wallypipelinedsoc import cvw::*; #(parameter cvw_t P)  (
   input  logic                reset_ext,        // external asynchronous reset pin
   output logic                reset,            // reset synchronized to clk to prevent races on release
   // AHB Interface (External Memory space designated for Convolutional Tsetlin Machine Accelerator)
-  input  logic [P.AHBW-1:0]   HRDATAEXT,
-  input  logic                HREADYEXT, HRESPEXT,
-  output logic                HSELEXT,
+  // (These signals are now internal, connected to the instantiated accelerator)
   // fpga debug signals
   input  logic                ExternalStall,
   // outputs to external memory, shared with uncore memory
@@ -73,6 +71,10 @@ module wallypipelinedsoc import cvw::*; #(parameter cvw_t P)  (
   logic [63:0]                MTIME_CLINT;      // from CLINT to CSRs
   logic                       MExtInt,SExtInt;  // from PLIC
 
+  // Internal AHB signals for the embedded accelerator
+  logic [P.AHBW-1:0]          HRDATAEXT;
+  logic                       HREADYEXT, HRESPEXT, HSELEXT;
+
   // synchronize reset to SOC clock domain
   synchronizer resetsync(.clk, .d(reset_ext), .q(reset));
 
@@ -95,5 +97,24 @@ module wallypipelinedsoc import cvw::*; #(parameter cvw_t P)  (
             MTIME_CLINT, GPIOOUT, GPIOEN, UARTSout, SPIOut, SPICS, SPICLK, SDCCmd, SDCCS, SDCCLK} = '0;
   end
 
+  // Multiplier AHB Slave (Placeholder for Tsetlin Machine Accelerator)
+  multiplier_ahb #(
+    .XLEN(32)
+  ) accel (
+    .clk(clk),
+    .reset(reset),
+    .HSEL(HSELEXT),
+    .HADDR(HADDR),
+    .HWDATA(HWDATA),
+    .HWRITE(HWRITE),
+    .HSIZE(HSIZE),
+    .HBURST(HBURST),
+    .HPROT(HPROT),
+    .HTRANS(HTRANS),
+    .HREADY(HREADY),
+    .HREADYOUT(HREADYEXT),
+    .HRESP(HRESPEXT),
+    .HRDATA(HRDATAEXT)
+  );
 
 endmodule

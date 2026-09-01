@@ -55,8 +55,8 @@ void print_hex(uint32_t val) {
 int main() {
     print_testing();
 
-    MULT_OPA = 0001;
-    MULT_OPB = 0002;
+    MULT_OPA = 0002;
+    MULT_OPB = 0001;
 
     uint32_t res = MULT_RES;
 
