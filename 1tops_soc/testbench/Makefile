@@ -13,4 +13,4 @@ run: sim
 	./obj_dir/Vtb
 
 clean:
-	rm -rf obj_dir trace.vcd test.mem
+	rm -rf obj_dir trace.vcd test.mem sim_out.txt

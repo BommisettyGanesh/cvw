@@ -1,13 +1,13 @@
 # ==============================================================================
 # Dynamic Project Update & RTL Schematic Re-Elaboration Script
-# CORE-V-Wally Minimal 32-Bit Core & SoC (my_minimal_rv32)
+# CORE-V-Wally RV32 Core & SoC (rv32_core)
 # ==============================================================================
 # Purpose: Dynamically rescans src/ and config/ for added/removed files and
 #          re-elaborates the RTL Schematic to reflect config.vh feature changes.
 # ==============================================================================
 
 set script_dir [file dirname [file normalize [info script]]]
-set proj_file [file join $script_dir "my_minimal_rv32_schematic" "my_minimal_rv32_schematic.xpr"]
+set proj_file [file join $script_dir "rv32_core_schematic" "rv32_core_schematic.xpr"]
 set src_dir [file normalize [file join $script_dir ".." "src"]]
 set config_dir [file normalize [file join $script_dir ".." "config"]]
 

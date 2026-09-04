@@ -1,4 +1,4 @@
-// Config my_minimal_rv32 automatically derived from rv32imc on Sun Aug  9 11:39:22 2026 using derivgen.pl
+// Config rv32_core — minimal RV32I configuration derived from CVW rv32imc
 //////////////////////////////////////////
 // config.vh
 //
@@ -166,7 +166,7 @@ localparam logic UNCORE_RAM_SUPPORTED = 1;
 localparam logic [63:0] UNCORE_RAM_BASE  = 64'h80000000;
 localparam logic [63:0] UNCORE_RAM_RANGE = 64'h07FFFFFF;
 localparam logic UNCORE_RAM_PRELOAD = 1'b1;
-// External AHB Space reserved for Convolutional Tsetlin Machine Accelerator
+// External AHB Space reserved for Multiplier Accelerator
 localparam logic EXT_MEM_SUPPORTED = 1;
 localparam logic [63:0] EXT_MEM_BASE     = 64'h30000000;
 localparam logic [63:0] EXT_MEM_RANGE    = 64'h00FFFFFF;

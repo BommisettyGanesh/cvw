@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # Shell Launcher for Vivado Project & Dynamic Schematic Viewer
-# CORE-V-Wally Minimal 32-Bit Core & SoC (my_minimal_rv32)
+# CORE-V-Wally RV32 Core & SoC (rv32_core)
 # ==============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +30,7 @@ if [ -z "$VIVADO_BIN" ]; then
 fi
 
 echo "=========================================================================="
-echo "Starting Xilinx Vivado for CORE-V-Wally (my_minimal_rv32)"
+echo "Starting Xilinx Vivado for CORE-V-Wally (rv32_core)"
 echo "Vivado Executable: $VIVADO_BIN"
 echo "=========================================================================="
 

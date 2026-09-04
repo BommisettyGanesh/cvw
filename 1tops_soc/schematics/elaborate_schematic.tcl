@@ -1,9 +1,9 @@
 # ==============================================================================
-# Vivado RTL Schematic Elaborate Script for CORE-V-Wally (my_minimal_rv32)
+# Vivado RTL Schematic Elaborate Script for CORE-V-Wally (rv32_core)
 # ==============================================================================
 
 set script_dir [file dirname [file normalize [info script]]]
-set proj_file [file join $script_dir "my_minimal_rv32_schematic" "my_minimal_rv32_schematic.xpr"]
+set proj_file [file join $script_dir "rv32_core_schematic" "rv32_core_schematic.xpr"]
 
 # Create project if it doesn't exist yet
 if {![file exists $proj_file]} {

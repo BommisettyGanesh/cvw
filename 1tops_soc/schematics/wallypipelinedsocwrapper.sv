@@ -15,10 +15,6 @@ module wallypipelinedsocwrapper (
   input  logic                clk,
   input  logic                reset_ext,        // external asynchronous reset pin
   output logic                reset,            // reset synchronized to clk
-  // AHB Interface
-  input  logic [P.AHBW-1:0]   HRDATAEXT,
-  input  logic                HREADYEXT, HRESPEXT,
-  output logic                HSELEXT,
   // fpga debug signals
   input  logic                ExternalStall,
   // outputs to external memory, shared with uncore memory

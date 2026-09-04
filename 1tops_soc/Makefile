@@ -18,3 +18,6 @@ testbench: software
 clean:
 	$(MAKE) -C software clean
 	$(MAKE) -C testbench clean
+	rm -rf schematics/vivado*.log schematics/vivado*.jou schematics/vivado*.str
+	rm -rf schematics/*.backup.log schematics/*.backup.jou
+	rm -rf schematics/.Xil

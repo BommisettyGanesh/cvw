@@ -1,12 +1,12 @@
 # ==============================================================================
-# Vivado Project Creation Script for CORE-V-Wally (my_minimal_rv32)
+# Vivado Project Creation Script for CORE-V-Wally RV32 Core (rv32_core)
 # ==============================================================================
-# Target Core: my_minimal_rv32 (32-bit RISC-V SoC)
+# Target Core: rv32_core (32-bit RISC-V SoC)
 # Top Module: wallypipelinedsocwrapper (SoC Top Wrapper)
 # ==============================================================================
 
 # 1. Define Project Name and Paths
-set proj_name "my_minimal_rv32_schematic"
+set proj_name "rv32_core_schematic"
 set script_dir [file dirname [file normalize [info script]]]
 set proj_dir [file join $script_dir $proj_name]
 set src_dir [file normalize [file join $script_dir ".." "src"]]

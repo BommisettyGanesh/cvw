@@ -13,4 +13,4 @@ test.mem: test.elf
 	python3 elf2mem.py test.bin > $@
 
 clean:
-	rm -f test.elf test.mem
+	rm -f test.elf test.bin test.mem
