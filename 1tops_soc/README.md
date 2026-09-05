@@ -10,7 +10,7 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
                                 +-------------------------------------------------------+
                                 |                                                       |
                                 |                       RV32 Core                       |
-                                |                        (rv32i)                        |
+                                |                 (CORE-V-Wally rv32i)                  |
                                 |                                                       |
                                 +---------------------------+---------------------------+
                                                             |
