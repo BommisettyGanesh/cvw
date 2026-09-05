@@ -2,7 +2,7 @@
 .global _start
 
 _start:
-    # Initialize stack pointer to end of 16KB RAM (0x80000000 + 16384)
+    # Initialize stack pointer to end of 8KB dmem (0x80002000 + 8192)
     li sp, 0x80004000
 
     # Clear BSS

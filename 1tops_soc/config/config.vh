@@ -152,10 +152,10 @@ localparam WFI_TIMEOUT_BIT = 32'd16;
 // Peripheral Physical Addresses
 // Peripheral memory space extends from BASE to BASE+RANGE
 // Range should be a thermometer code with 0's in the upper bits and 1s in the lower bits
-localparam logic DTIM_SUPPORTED = 1;
+localparam logic DTIM_SUPPORTED = 0;
 localparam logic [63:0] DTIM_BASE        = 64'h80000000;
 localparam logic [63:0] DTIM_RANGE       = 64'h00003FFF;
-localparam logic IROM_SUPPORTED = 1;
+localparam logic IROM_SUPPORTED = 0;
 localparam logic [63:0] IROM_BASE        = 64'h80000000;
 localparam logic [63:0] IROM_RANGE       = 64'h00003FFF;
 localparam logic BOOTROM_SUPPORTED = 1;
@@ -164,7 +164,7 @@ localparam logic [63:0] BOOTROM_RANGE    = 64'h00000FFF;
 localparam logic BOOTROM_PRELOAD = 1'b0;
 localparam logic UNCORE_RAM_SUPPORTED = 1;
 localparam logic [63:0] UNCORE_RAM_BASE  = 64'h80000000;
-localparam logic [63:0] UNCORE_RAM_RANGE = 64'h07FFFFFF;
+localparam logic [63:0] UNCORE_RAM_RANGE = 64'h00003FFF;  // 16KB total: 8KB instr + 8KB data
 localparam logic UNCORE_RAM_PRELOAD = 1'b1;
 // External AHB Space reserved for Multiplier Accelerator
 localparam logic EXT_MEM_SUPPORTED = 1;

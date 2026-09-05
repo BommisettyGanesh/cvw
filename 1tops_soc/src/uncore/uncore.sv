@@ -66,11 +66,12 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
 
   logic [P.XLEN-1:0]           HREADRam, HREADSDC;
 
-  logic [11:0]                 HSELRegions;
+  logic [12:0]                 HSELRegions;
   logic                        HSELDTIM, HSELIROM, HSELRam, HSELCLINT, HSELPLIC, HSELGPIO, HSELUART,HSELSDC, HSELSPI;
   logic                        HSELDTIMD, HSELIROMD, HSELEXTD, HSELRamD, HSELCLINTD, HSELPLICD, HSELGPIOD, HSELUARTD, HSELSDCD, HSELSPID;
-  logic                        HRESPRam,  HRESPSDC;
-  logic                        HREADYRam, HRESPSDCD;
+  logic                        HSELDRAM, HSELDRAMD;
+  logic                        HRESPRamI, HRESPRamD;
+  logic                        HREADYRamI, HREADYRamD;
   logic [P.XLEN-1:0]           HREADBootRom;
   logic                        HSELBootRom, HSELBootRomD, HRESPBootRom, HREADYBootRom, HREADYSDC;
   logic                        HSELNoneD;
@@ -98,7 +99,7 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
   adrdecs #(P) adrdecs(HADDR, 1'b1, 1'b1, 1'b1, HSIZE[1:0], HSELRegions);
 
   // unswizzle HSEL signals
-  assign {HSELSPI, HSELSDC, HSELPLIC, HSELUART, HSELGPIO, HSELCLINT, HSELRam, HSELBootRom, HSELEXT, HSELIROM, HSELDTIM} = HSELRegions[11:1];
+  assign {HSELDRAM, HSELSPI, HSELSDC, HSELPLIC, HSELUART, HSELGPIO, HSELCLINT, HSELRam, HSELBootRom, HSELEXT, HSELIROM, HSELDTIM} = HSELRegions[12:1];
 
   // AHB -> APB bridge
   ahbapbbridge #(P, 6) ahbapbbridge (
@@ -107,12 +108,18 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
     .PCLK, .PRESETn, .PSEL, .PWRITE, .PENABLE, .PADDR, .PWDATA, .PSTRB, .PREADY, .PRDATA);
   assign HSELBRIDGE = HSELGPIO | HSELCLINT | HSELPLIC | HSELUART | HSELSPI | HSELSDC; // if any of the bridge signals are selected
 
-  // on-chip RAM
+  // on-chip RAM split into Instruction and Data halves
   if (P.UNCORE_RAM_SUPPORTED) begin : ram
-    ram_ahb #(.P(P), .RANGE(P.UNCORE_RAM_RANGE), .PRELOAD(P.UNCORE_RAM_PRELOAD)) ram (
-      .HCLK, .HRESETn, .HSELRam, .HADDR, .HWRITE, .HREADY,
-      .HTRANS, .HWDATA, .HWSTRB, .HREADRam, .HRESPRam, .HREADYRam);
-  end else assign {HREADRam, HRESPRam, HREADYRam} = '0;
+    // 8KB Instruction RAM (A13 = 0)
+    ram_ahb #(.P(P), .RANGE(P.UNCORE_RAM_RANGE/2), .PRELOAD(P.UNCORE_RAM_PRELOAD), .MEMFILE("test_instr.mem")) ram_i (
+      .HCLK, .HRESETn, .HSELRam(HSELRam), .HADDR, .HWRITE, .HREADY,
+      .HTRANS, .HWDATA, .HWSTRB, .HREADRam(HREADRam), .HRESPRam(HRESPRamI), .HREADYRam(HREADYRamI));
+
+    // 8KB Data RAM (A13 = 1)
+    ram_ahb #(.P(P), .RANGE(P.UNCORE_RAM_RANGE/2), .PRELOAD(P.UNCORE_RAM_PRELOAD), .MEMFILE("test_data.mem")) ram_d (
+      .HCLK, .HRESETn, .HSELRam(HSELDRAM), .HADDR, .HWRITE, .HREADY,
+      .HTRANS, .HWDATA, .HWSTRB, .HREADRam(HREADSDC), .HRESPRam(HRESPRamD), .HREADYRam(HREADYRamD));
+  end else assign {HREADRam, HREADSDC, HRESPRamI, HRESPRamD, HREADYRamI, HREADYRamD} = '0;
 
  if (P.BOOTROM_SUPPORTED) begin : bootrom
     rom_ahb #(.P(P), .RANGE(P.BOOTROM_RANGE), .PRELOAD(P.BOOTROM_PRELOAD))
@@ -179,17 +186,21 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
 
 
   // AHB Read Multiplexer
+  // We use HREADRam for Instruction RAM and HREADSDC for Data RAM (repurposed variable)
   assign HRDATA = ({P.XLEN{HSELRamD}} & HREADRam) |
+                  ({P.XLEN{HSELDRAMD}} & HREADSDC) |
                   ({P.XLEN{HSELEXTD}} & HRDATAEXT) |
                   ({P.XLEN{HSELBRIDGED}} & HREADBRIDGE) |
                   ({P.XLEN{HSELBootRomD}} & HREADBootRom);
 
-  assign HRESP = HSELRamD & HRESPRam |
+  assign HRESP = HSELRamD & HRESPRamI |
+                 HSELDRAMD & HRESPRamD |
                  HSELEXTD & HRESPEXT |
                  HSELBRIDGE & HRESPBRIDGE |
                  HSELBootRomD & HRESPBootRom;
 
-  assign HREADY = HSELRamD & HREADYRam |
+  assign HREADY = HSELRamD & HREADYRamI |
+                  HSELDRAMD & HREADYRamD |
                   HSELEXTD & HREADYEXT |
                   HSELBRIDGED & HREADYBRIDGE |
                   HSELBootRomD & HREADYBootRom |
@@ -200,8 +211,8 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
   // takes more than 1 cycle to respond it needs to hold on to the old select until the
   // device is ready.  Hence this register must be selectively enabled by HREADY.
   // However on reset None must be selected.
-  flopenl #(12) hseldelayreg(HCLK, ~HRESETn, HREADY, HSELRegions, 12'b1,
-    {HSELSPID, HSELSDCD, HSELPLICD, HSELUARTD, HSELGPIOD, HSELCLINTD,
+  flopenl #(13) hseldelayreg(HCLK, ~HRESETn, HREADY, HSELRegions, 13'b1,
+    {HSELDRAMD, HSELSPID, HSELSDCD, HSELPLICD, HSELUARTD, HSELGPIOD, HSELCLINTD,
       HSELRamD, HSELBootRomD, HSELEXTD, HSELIROMD, HSELDTIMD, HSELNoneD});
   flopenr #(1) hselbridgedelayreg(HCLK, ~HRESETn, HREADY, HSELBRIDGE, HSELBRIDGED);
 endmodule

@@ -9,7 +9,7 @@ int main(int argc, char** argv) {
 
     Vtb* tb = new Vtb;
     VerilatedVcdC* tfp = new VerilatedVcdC;
-    tb->trace(tfp, 3);  // depth 3: captures AHB bus signals at SoC/EBU/uncore level
+    tb->trace(tfp, 2);  // depth 2: captures AHB bus signals at SoC level, excluding core internals
     tfp->open("trace.vcd");
 
     // Reset sequence

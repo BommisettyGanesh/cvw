@@ -3,7 +3,8 @@ ENTRY(_start)
 
 MEMORY
 {
-  ram (rwx) : ORIGIN = 0x80000000, LENGTH = 16K
+  imem (rx)  : ORIGIN = 0x80000000, LENGTH = 8K
+  dmem (rwx) : ORIGIN = 0x80002000, LENGTH = 8K
 }
 
 SECTIONS
@@ -12,20 +13,20 @@ SECTIONS
     *(.text._start)
     *(.text*)
     *(.rodata*)
-  } > ram
+  } > imem
 
   .data : {
     *(.data*)
     *(.sdata*)
-  } > ram
+  } > dmem
 
   .bss : {
     __bss_start = .;
     *(.bss*)
     *(.sbss*)
     __bss_end = .;
-  } > ram
+  } > dmem
 
   . = ALIGN(8);
-  /* Stack will be placed at the end of RAM by crt0 */
+  /* Stack will be placed at the end of dmem by crt0 */
 }

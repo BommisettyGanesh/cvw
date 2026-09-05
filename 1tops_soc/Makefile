@@ -21,3 +21,9 @@ clean:
 	rm -rf schematics/vivado*.log schematics/vivado*.jou schematics/vivado*.str
 	rm -rf schematics/*.backup.log schematics/*.backup.jou
 	rm -rf schematics/.Xil
+
+clean-all: clean
+	find . -type f -name '*~' -delete
+	find . -type f -name '*.bak' -delete
+	find . -type d -name '__pycache__' -exec rm -rf {} +
+	find . -type f -name '.DS_Store' -delete

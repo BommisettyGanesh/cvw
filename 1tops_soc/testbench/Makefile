@@ -9,8 +9,9 @@ sim:
 	make -j -C obj_dir -f Vtb.mk Vtb
 
 run: sim
-	cp ../software/test.mem .
+	cp ../software/test_instr.mem .
+	cp ../software/test_data.mem .
 	./obj_dir/Vtb
 
 clean:
-	rm -rf obj_dir trace.vcd test.mem sim_out.txt
+	rm -rf obj_dir trace.vcd test_instr.mem test_data.mem sim_out.txt

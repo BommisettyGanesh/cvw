@@ -34,7 +34,7 @@
 
 // WIDTH is number of bits in one "word" of the memory, DEPTH is number of such words
 
-module ram1p1rwbe import cvw::*; #(parameter USE_SRAM=0, DEPTH=64, WIDTH=44, PRELOAD_ENABLED=0) (
+module ram1p1rwbe import cvw::*; #(parameter USE_SRAM=0, DEPTH=64, WIDTH=44, PRELOAD_ENABLED=0, string MEMFILE="test.mem") (
   input logic                     clk,
   input logic                     ce,
   input logic [$clog2(DEPTH)-1:0] addr,
@@ -96,7 +96,7 @@ module ram1p1rwbe import cvw::*; #(parameter USE_SRAM=0, DEPTH=64, WIDTH=44, PRE
     initial begin
       if (PRELOAD_ENABLED) begin
         if (WIDTH == 64 || WIDTH == 32) begin
-          $readmemh("test.mem", RAM, 0);  // load unified boot RAM for simulation
+          $readmemh(MEMFILE, RAM, 0);  // load RAM for simulation
         end else begin // put something in the RAM so it is not optimized away
           RAM[0] = 'h00002197;
         end

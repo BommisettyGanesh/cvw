@@ -16,14 +16,14 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
                                               |
                                         AHB-Lite Bus
                                               |
-     +-----------------+----------------------+-------------------+--------------------+
-     |                 |                                          |                    |
-+----+----+       +----+----+                                +----+----+          +----+----+
-|  Boot   |       | Unified |                                | AHB-to- |          |Multiplier|
-|  ROM    |       |   RAM   |                                |   APB   |          |  Accel.  |
-|(0x1000) |       |(0x8000_)|                                | Bridge  |          |(0x3000_)|
-|         |       |  0000   |                                |         |          |  0000   |
-+---------+       +---------+                                +----+----+          +---------+
+     +-----------------+-------------+--------+-------------+-------------------+--------------------+
+     |                 |                      |             |                   |                    |
++----+----+       +----+----+            +----+----+   +----+----+          +----+----+
+|  Boot   |       | Instr   |            | Data    |   | AHB-to- |          |Multiplier|
+|  ROM    |       |  RAM    |            |  RAM    |   |   APB   |          |  Accel.  |
+|(0x1000) |       |(0x8000_)|            |(0x8000_)|   | Bridge  |          |(0x3000_)|
+|         |       |  0000   |            |  2000   |   |         |          |  0000   |
++---------+       +---------+            +---------+   +----+----+          +---------+
                                                                   |
                                                                APB Bus
                                                                   |
@@ -48,7 +48,8 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
 | `0x1004_0000`    | SPI                          |
 | `0x1006_0000`    | GPIO                         |
 | `0x3000_0000`    | Multiplier Accelerator (AHB) |
-| `0x8000_0000`    | Unified RAM (Main Memory)    |
+| `0x8000_0000`    | Instruction RAM (8KB)        |
+| `0x8000_2000`    | Data RAM (8KB)               |
 
 ## Directory Structure
 
@@ -84,8 +85,8 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
 - **Pipelined RISC-V Core**: Minimal rv32i instruction set. No FPU, no caches, no MDU, no branch predictors, no TLBs, no compressed/crypto/bitmanip extensions.
 - **AHB-Lite Interconnect**: Standard bus interface for attaching IP blocks.
 - **External Accelerator Support**: Dedicated AHB region at `0x3000_0000` for custom accelerators (currently a hardware multiplier).
-- **Full Uncore**: UART, GPIO, SPI, CLINT, PLIC, Boot ROM, and Unified RAM are all present and functional.
-- **Unified RAM**: Mapped at `0x8000_0000`, initialized from `test.mem` during simulation.
+- **Full Uncore**: UART, GPIO, SPI, CLINT, PLIC, Boot ROM, and Independent Instruction/Data RAMs are all present and functional.
+- **Independent RAMs**: 16KB total, mapped at `0x8000_0000` (8KB Instruction RAM) and `0x8000_2000` (8KB Data RAM), initialized from `test_instr.mem` and `test_data.mem` during simulation.
 
 ## Integrating an Accelerator
 
@@ -118,7 +119,7 @@ make
 ```
 
 This single command will:
-1. Clean and compile `software/main.c` into a `test.mem` hex file.
+1. Clean and compile `software/main.c` into `test_instr.mem` and `test_data.mem` hex files.
 2. Clean and compile the Verilator hardware simulation model.
 3. Execute the full SoC testbench and print C code outputs to your terminal.
 
@@ -141,3 +142,49 @@ cd schematics
 ```
 
 This creates a Vivado project, adds all sources, elaborates the RTL, and opens the schematic viewer. See `schematics/README.md` for details.
+## 4. Tsetlin Machine Accelerator & Debug Unit Integration
+
+### Tsetlin Machine Integration (`0x3000_0000`)
+The system is explicitly designed to act as a bare-metal controller for an external Convolutional Tsetlin Machine.
+The accelerator space is mapped to `0x3000_0000` - `0x30FF_FFFF` (16MB).
+Because it uses the `EXT_MEM` parameter configuration, any memory access by the core to this region is automatically routed out of the top-level `wallypipelinedsoc.sv` module via the `HSELEXT` and `HRDATAEXT` pins.
+
+We have provided a template accelerator and testbench to show how this is connected:
+- **`src/accelerator/tsetlin_ahb_wrapper.sv`**: A mock SystemVerilog AHB peripheral mapped to `0x3000_0000`. You should put your actual Tsetlin Machine logic in this file (or replace it).
+- **`filelist.f`**: This manifest includes `src/accelerator/*.sv` so your accelerator is automatically picked up by Vivado and Verilator.
+- **`testbench/tb.sv`**: This is the top-level testbench that instantiates both `wallypipelinedsoc` and `tsetlin_ahb_wrapper`, connecting the exported AHB pins (`HSELEXT`, `HADDREXT`, etc.) directly to the accelerator.
+
+### Debug Unit Integration
+The `SDC` APB peripheral slot has been repurposed as a placeholder for a custom Debug Unit.
+In `src/uncore/uncore.sv`, look for the `debug_unit` block. You can connect your custom debug module directly to the APB bus signals `PSEL[5]`, `PADDR`, `PWDATA`, and `PRDATA[5]` located there.
+
+---
+
+## 5. Software C-Compilation & Verilator Simulation
+
+This repository includes a bare-metal C toolchain scaffold and a Verilator simulator driver so you can write C code, compile it, and run it against the RTL (and your accelerator).
+
+### 1. Writing C Code (`software/`)
+The `software/` directory contains everything you need to write and compile code for the `1tops_soc`:
+- `main.c`: Your main application. It demonstrates how to print to the UART (`0x1000_0000`) and how to read/write memory-mapped registers in the Tsetlin Accelerator (`0x3000_0000`).
+- `link.ld`: A minimal linker script mapping code to the Instruction RAM and data to the Data RAM.
+- `crt0.S`: Assembly startup script to initialize the stack and jump to `main`.
+- `Makefile`: Uses `riscv64-unknown-elf-gcc` to compile the C files and generates `test_instr.mem` and `test_data.mem` hex files.
+
+### 2. Simulating with Verilator (`testbench/`)
+The `testbench/` directory contains a complete simulation environment.
+
+**Prerequisites:**
+You need `verilator` and `riscv64-unknown-elf-gcc` installed on your machine.
+
+**Running the Simulation:**
+Navigate to the testbench directory and run `make run` (or just `make` from the repository root):
+```bash
+make
+```
+
+**What happens when you type `make`:**
+1. It builds the Verilator C++ model of `tb.sv` (which includes the SoC and the Accelerator).
+2. It copies the `software/test_instr.mem` and `software/test_data.mem` (your compiled C code) into the testbench directory.
+3. It runs the simulation. The internal `ram_ahb.sv` memory modules use `$readmemh` to preload your C code into the Instruction and Data SRAMs.
+4. The simulation executes, and a `trace.vcd` waveform is generated (limited to AHB signals to reduce size) for debugging in GTKWave!
