@@ -10,7 +10,7 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
                                 +-------------------------------------------------------+
                                 |                                                       |
                                 |                       RV32 Core                       |
-                                |                 (CORE-V-Wally rv32i)                  |
+                                |                        (rv32i)                        |
                                 |                                                       |
                                 +---------------------------+---------------------------+
                                                             |
@@ -44,7 +44,7 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
 | `0x1000_0000` | `0x1000_0007` | 8 B    | APB | UART (16550-compatible)      |
 | `0x1004_0000` | `0x1004_0FFF` | 4 KB   | APB | SPI                          |
 | `0x1006_0000` | `0x1006_00FF` | 256 B  | APB | GPIO                         |
-| `0x3000_0000` | `0x30FF_FFFF` | 16 MB  | AHB | Multiplier Accelerator       |
+| `0x3000_0000` | `0x30FF_FFFF` | 16 MB  | AHB | Multiplier Module            |
 | `0x8000_0000` | `0x8000_1FFF` | 8 KB   | AHB | Instruction RAM              |
 | `0x8000_2000` | `0x8000_3FFF` | 8 KB   | AHB | Data RAM                     |
 
@@ -94,7 +94,7 @@ Custom accelerators are integrated directly into the SoC as **AHB Slaves** insid
 3. **Add to filelist**: Add the new `.sv` file path to `filelist.f`.
 4. **Access from Software**: Use memory-mapped I/O at `0x3000_0000` in your C code.
 
-### Multiplier Accelerator Registers
+### Multiplier Module Registers
 
 | Offset | Register | Description          |
 |--------|----------|----------------------|
