@@ -61,7 +61,18 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
   input  logic                 SDCIn,
   output logic                 SDCCmd,
   output logic [3:0]           SDCCS,
-  output logic                 SDCCLK
+  output logic                 SDCCLK,
+//
+//
+  // Debugger Interface to UART
+  input  logic [7:0]           dbg_uart_tx_data,
+  input  logic                 dbg_uart_tx_valid,
+  output logic                 dbg_uart_tx_ready,
+  output logic [7:0]           dbg_uart_rx_data,
+  output logic                 dbg_uart_rx_valid,
+  input  logic                 dbg_uart_rx_ready
+//
+//
 );
 
   logic [P.XLEN-1:0]           HREADRam, HREADSDC;
@@ -159,9 +170,23 @@ module uncore import cvw::*;  #(parameter cvw_t P)(
       .PRDATA(PRDATA[3]), .PREADY(PREADY[3]),
       .SIN(UARTSin), .DSRb(1'b1), .DCDb(1'b1), .CTSb(1'b0), .RIb(1'b1), // from E1A driver from RS232 interface
       .SOUT(UARTSout), .RTSb(), .DTRb(),                                // to E1A driver to RS232 interface
-      .OUT1b(), .OUT2b(), .INTR(UARTIntr), .TXRDYb(), .RXRDYb());       // to CPU
+      .OUT1b(), .OUT2b(), .INTR(UARTIntr), .TXRDYb(), .RXRDYb(),        // to CPU
+//
+//
+      .dbg_tx_data(dbg_uart_tx_data), .dbg_tx_valid(dbg_uart_tx_valid), .dbg_tx_ready(dbg_uart_tx_ready),
+      .dbg_rx_data(dbg_uart_rx_data), .dbg_rx_valid(dbg_uart_rx_valid), .dbg_rx_ready(dbg_uart_rx_ready)
+//
+//
+    );
   end else begin : uart
     assign UARTSout = 1'b0; assign UARTIntr = 1'b0;
+//
+//
+    assign dbg_uart_tx_ready = 1'b0;
+    assign dbg_uart_rx_data  = 8'h00;
+    assign dbg_uart_rx_valid = 1'b0;
+//
+//
   end
 
   if (P.SPI_SUPPORTED == 1) begin : spi

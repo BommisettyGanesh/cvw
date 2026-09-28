@@ -49,7 +49,18 @@ module uartPC16550D #(parameter UART_PRESCALE) (
   input logic        RCLK,                           // usually BAUDOUTb tied to RCLK externally
   // E1A Driver
   input  logic       SIN, DSRb, DCDb, CTSb, RIb,     // UART external serial and flow-control inputs
-  output logic       SOUT, RTSb, DTRb, OUT1b, OUT2b  // UART external serial and flow-control outputs
+  output logic       SOUT, RTSb, DTRb, OUT1b, OUT2b, // UART external serial and flow-control outputs
+//
+//
+  // Debugger Interface (transfer data to/from debugger)
+  input  logic [7:0] dbg_tx_data,
+  input  logic       dbg_tx_valid,
+  output logic       dbg_tx_ready,
+  output logic [7:0] dbg_rx_data,
+  output logic       dbg_rx_valid,
+  input  logic       dbg_rx_ready
+//
+//
 );
 
   // register map
@@ -120,6 +131,14 @@ module uartPC16550D #(parameter UART_PRESCALE) (
 
   // control signals
   logic                         fifoenabled, fifodmamodesel, evenparitysel;
+
+//
+//
+  // Debugger Interface signals
+  logic [7:0]                   dbg_rx_data_reg;
+  logic                         dbg_rx_valid_reg;
+//
+//
 
   // interrupts
   logic                         RXerr, RXerrIP, squashRXerrIP, prevSquashRXerrIP, setSquashRXerrIP, resetSquashRXerrIP;
@@ -334,6 +353,29 @@ module uartPC16550D #(parameter UART_PRESCALE) (
         end
     end
 
+//
+//
+  // Debugger RX logic: transfer incoming serial data from existing UART to debugger
+  always_ff @(posedge PCLK) begin
+    if (~PRESETn) begin
+      dbg_rx_data_reg  <= 8'h00;
+      dbg_rx_valid_reg <= 1'b0;
+    end else begin
+      if (rxstate == UART_DONE) begin
+        dbg_rx_data_reg  <= rxdata;
+        dbg_rx_valid_reg <= 1'b1;
+      end else if (dbg_rx_valid_reg & dbg_rx_ready) begin
+        dbg_rx_valid_reg <= 1'b0;
+      end
+    end
+  end
+
+  assign dbg_rx_data  = dbg_rx_data_reg;
+  assign dbg_rx_valid = dbg_rx_valid_reg;
+  assign dbg_tx_ready = fifoenabled ? ~txfifofull : ~txhrfull;
+//
+//
+
   assign rxfifoempty = (rxfifohead == rxfifotail);
   /* verilator lint_off WIDTH */
   assign rxfifoentries = (rxfifohead >= rxfifotail) ? (rxfifohead-rxfifotail) :
@@ -446,6 +488,19 @@ module uartPC16550D #(parameter UART_PRESCALE) (
           txhrfull <= 1'b1;
         end
         $write("%c",Din); // for testbench
+//
+//
+      end else if (dbg_tx_valid & dbg_tx_ready) begin // debugger transmitting via uncore UART
+        if (fifoenabled) begin
+          txfifo[txfifohead] <= dbg_tx_data;
+          txfifohead         <= txfifohead + 4'b1;
+        end else begin
+          TXHR     <= dbg_tx_data;
+          txhrfull <= 1'b1;
+        end
+        $write("%c",dbg_tx_data); // for testbench
+//
+//
       end
       if (txstate == UART_IDLE) begin // move data into tx shift register if available
         if (fifoenabled) begin

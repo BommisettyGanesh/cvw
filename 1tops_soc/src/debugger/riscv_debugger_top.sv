@@ -1,22 +1,25 @@
 //-----------------------------------------------------------------------------
 // Top-Level Debugger Subsystem for CORE-V Wally RISC-V SoC
-// Integrates UART Transceiver, ADP Controller, Core Halt/Resume hooks,
-// and AHB-Lite Master Interface
+// Redesigned to transfer data to/from the UART present in uncore
+// Replaces dedicated UART transceiver (socdebug_uart) with direct uncore UART interface
 //-----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
 
 module riscv_debugger_top #(
-    parameter CLK_FREQ    = 50_000_000,
-    parameter BAUD_RATE   = 115200,
     parameter PROMPT_CHAR = "]"
 )(
     input  wire        clk,
     input  wire        rst_n,
 
-    // UART Physical Interface
-    input  wire        uart_rx,
-    output wire        uart_tx,
+    // Interface to Uncore UART (Transfers data to/from existing uncore UART)
+    input  wire [7:0]  uart_rx_data,
+    input  wire        uart_rx_valid,
+    output wire        uart_rx_ready,
+
+    output wire [7:0]  uart_tx_data,
+    output wire        uart_tx_valid,
+    input  wire        uart_tx_ready,
 
     // Core Control & Status Signals
     output wire        core_halt_o,    // Connect to ExternalStall of RISC-V Core
@@ -41,32 +44,6 @@ module riscv_debugger_top #(
     input  wire [7:0]  GPI8
 );
 
-    // Internal Stream connections between UART and ADP controller
-    wire [7:0] adp_rxd_data;
-    wire       adp_rxd_valid;
-    wire       adp_rxd_ready;
-
-    wire [7:0] adp_txd_data;
-    wire       adp_txd_valid;
-    wire       adp_txd_ready;
-
-    // Instantiate UART Transceiver
-    socdebug_uart #(
-        .CLK_FREQ  (CLK_FREQ),
-        .BAUD_RATE (BAUD_RATE)
-    ) u_uart (
-        .clk           (clk),
-        .rst_n         (rst_n),
-        .uart_rx       (uart_rx),
-        .uart_tx       (uart_tx),
-        .m_axis_tdata  (adp_rxd_data),
-        .m_axis_tvalid (adp_rxd_valid),
-        .m_axis_tready (adp_rxd_ready),
-        .s_axis_tdata  (adp_txd_data),
-        .s_axis_tvalid (adp_txd_valid),
-        .s_axis_tready (adp_txd_ready)
-    );
-
     // Instantiate SoCDebug AHB Controller
     socdebug_ahb #(
         .PROMPT_CHAR (PROMPT_CHAR)
@@ -85,13 +62,13 @@ module riscv_debugger_top #(
         .HREADY_i       (DEBUG_HREADY),
         .HRESP_i        (DEBUG_HRESP),
 
-        // Stream Interface connected to UART
-        .COMRX_TDATA_i  (adp_rxd_data),
-        .COMRX_TVALID_i (adp_rxd_valid),
-        .COMRX_TREADY_o (adp_rxd_ready),
-        .COMTX_TDATA_o  (adp_txd_data),
-        .COMTX_TVALID_o (adp_txd_valid),
-        .COMTX_TREADY_i (adp_txd_ready),
+        // Stream Interface connected directly to Uncore UART data transfer ports
+        .COMRX_TDATA_i  (uart_rx_data),
+        .COMRX_TVALID_i (uart_rx_valid),
+        .COMRX_TREADY_o (uart_rx_ready),
+        .COMTX_TDATA_o  (uart_tx_data),
+        .COMTX_TVALID_o (uart_tx_valid),
+        .COMTX_TREADY_i (uart_tx_ready),
 
         // Unused STDIO stream tied off
         .STDTX_TVALID_o (),
