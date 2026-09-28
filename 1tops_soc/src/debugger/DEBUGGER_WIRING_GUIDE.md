@@ -59,38 +59,40 @@ graph TD
         APB["AHB-to-APB Bridge & Peripherals<br/>CLINT, PLIC, GPIO, SPI, SDC"]:::slave
     end
 
-    CLI -->|UARTSin (Physical RX)| UART
-    UART -->|UARTSout (Physical TX)| CLI
+    CLI -->|UARTSin Physical RX| UART
+    UART -->|UARTSout Physical TX| CLI
 
-    UART -->|dbg_uart_rx_data/valid/ready| ADP
-    ADP -->|dbg_uart_tx_data/valid/ready| UART
+    UART -->|dbg_uart_rx_data valid ready| ADP
+    ADP -->|dbg_uart_tx_data valid ready| UART
 
     ADP -->|core_halt_o| HAZ
-    ADP -->|core_halt_o (priority)| MUX
+    ADP -->|core_halt_o priority| MUX
     ADP -->|core_reset_o| CPU
     HAZ -->|core_halted_status| ADP
 
     HAZ -->|StallF..W = 1| PIPE
 
-    PIPE -->|Master 0 (core_h*)| MUX
-    ADP -->|Master 1 (DEBUG_*)| MUX
+    PIPE -->|Master 0 core_h*| MUX
+    ADP -->|Master 1 DEBUG_*| MUX
 
-    MUX -->|Downstream AHB (S_*)| DEC
+    MUX -->|Downstream AHB S_*| DEC
+
     DEC -->|HSELEXT| ACC
     DEC -->|HSELRam| IRAM
     DEC -->|HSELDRAM| DRAM
     DEC -->|HSELBootRom| ROM
     DEC -->|HSELBRIDGE| APB
 
-    ACC -->|HRDATAEXT / HREADYEXT| RMUX
-    IRAM -->|HREADRam / HREADYRamI| RMUX
-    DRAM -->|HREADSDC / HREADYRamD| RMUX
-    ROM -->|HREADBootRom / HREADYBootRom| RMUX
-    APB -->|HREADBRIDGE / HREADYBRIDGE| RMUX
+    ACC -->|HRDATAEXT HREADYEXT| RMUX
+    IRAM -->|HREADRam HREADYRamI| RMUX
+    DRAM -->|HREADSDC HREADYRamD| RMUX
+    ROM -->|HREADBootRom HREADYBootRom| RMUX
+    APB -->|HREADBRIDGE HREADYBRIDGE| RMUX
 
-    RMUX -->|S_HRDATA / S_HREADY / S_HRESP| MUX
-    MUX -->|M0_HRDATA / HREADY| PIPE
-    MUX -->|M1_HRDATA / HREADY| ADP
+    RMUX -->|S_HRDATA S_HREADY S_HRESP| MUX
+
+    MUX -->|M0_HRDATA HREADY| PIPE
+    MUX -->|M1_HRDATA HREADY| ADP
 ```
 
 ---
