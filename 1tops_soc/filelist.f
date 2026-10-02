@@ -80,11 +80,3 @@ src/ieu/ieu.sv
 src/ieu/alu.sv
 src/ieu/regfile.sv
 src/accelerator/multiplier_ahb.sv
-//
-//
-src/debugger/socdebug_adp_control.v
-src/debugger/socdebug_ahb.v
-src/debugger/ahb_mux.sv
-src/debugger/riscv_debugger_top.sv
-//
-//

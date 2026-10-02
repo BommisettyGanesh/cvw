@@ -1,6 +1,5 @@
 //-----------------------------------------------------------------------------
-// Testbench for Redesigned SoCDebug Debugger Subsystem on RISC-V SoC (CORE-V Wally)
-// Tests Debugger transferring data to/from the existing Uncore UART (uartPC16550D)
+// Testbench for SoCDebug Debugger Subsystem on RISC-V SoC (CORE-V Wally)
 //-----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -8,7 +7,8 @@
 module tb_debugger;
 
     localparam CLK_FREQ   = 50_000_000;
-    localparam BIT_PERIOD = 640; // in ns (32 clk cycles at 50 MHz for uncore UART)
+    localparam BAUD_RATE  = 2_500_000; // High speed for fast simulation
+    localparam BIT_PERIOD = 1_000_000_000 / BAUD_RATE; // in ns (400 ns)
 
     reg clk;
     reg rst_n;
@@ -50,7 +50,7 @@ module tb_debugger;
     wire [31:0] s_hwdata;
     wire        s_hwrite;
     wire [ 1:0] s_htrans;
-    wire [2:0]  s_hsize;
+    wire [ 2:0] s_hsize;
     wire [ 2:0] s_hburst;
     wire [ 3:0] s_hprot;
     wire        s_hmastlock;
@@ -64,63 +64,16 @@ module tb_debugger;
         forever #10 clk = ~clk;
     end
 
-    // Interface signals between Debugger and Uncore UART
-    wire [7:0] dbg_uart_tx_data;
-    wire       dbg_uart_tx_valid;
-    wire       dbg_uart_tx_ready;
-    wire [7:0] dbg_uart_rx_data;
-    wire       dbg_uart_rx_valid;
-    wire       dbg_uart_rx_ready;
-    wire       baudout_b;
-
-    // Instantiate Existing Uncore UART (PC16550D) with Debug Interface
-    uartPC16550D #(
-        .UART_PRESCALE(1)
-    ) u_uncore_uart (
-        .PCLK       (clk),
-        .PRESETn    (rst_n),
-        .A          (3'b000),
-        .Din        (8'h00),
-        .Dout       (),
-        .MEMRb      (1'b1),
-        .MEMWb      (1'b1),
-        .INTR       (),
-        .TXRDYb     (),
-        .RXRDYb     (),
-        .BAUDOUTb   (baudout_b),
-        .RCLK       (baudout_b),
-        .SIN        (uart_rx),
-        .DSRb       (1'b1),
-        .DCDb       (1'b1),
-        .CTSb       (1'b0),
-        .RIb        (1'b1),
-        .SOUT       (uart_tx),
-        .RTSb       (),
-        .DTRb       (),
-        .OUT1b      (),
-        .OUT2b      (),
-
-        // Debugger Data Transfer Interface
-        .dbg_tx_data  (dbg_uart_tx_data),
-        .dbg_tx_valid (dbg_uart_tx_valid),
-        .dbg_tx_ready (dbg_uart_tx_ready),
-        .dbg_rx_data  (dbg_uart_rx_data),
-        .dbg_rx_valid (dbg_uart_rx_valid),
-        .dbg_rx_ready (dbg_uart_rx_ready)
-    );
-
-    // Instantiate Redesigned Debugger Subsystem (transfers data to/from uncore UART)
+    // Instantiate Top-level Debugger Subsystem
     riscv_debugger_top #(
+        .CLK_FREQ    (CLK_FREQ),
+        .BAUD_RATE   (BAUD_RATE),
         .PROMPT_CHAR ("]")
     ) dut_debugger (
         .clk             (clk),
         .rst_n           (rst_n),
-        .uart_rx_data    (dbg_uart_rx_data),
-        .uart_rx_valid   (dbg_uart_rx_valid),
-        .uart_rx_ready   (dbg_uart_rx_ready),
-        .uart_tx_data    (dbg_uart_tx_data),
-        .uart_tx_valid   (dbg_uart_tx_valid),
-        .uart_tx_ready   (dbg_uart_tx_ready),
+        .uart_rx         (uart_rx),
+        .uart_tx         (uart_tx),
         .core_halt_o     (core_halt_o),
         .core_reset_o    (core_reset_o),
         .core_halted_i   (core_halted_i),
@@ -241,7 +194,7 @@ module tb_debugger;
         end
     end
 
-    // Task to send a byte over UART RX pin (into Uncore UART SIN)
+    // Task to send a byte over UART RX pin
     task send_uart_byte(input [7:0] data);
         integer i;
         begin
@@ -284,7 +237,6 @@ module tb_debugger;
     initial begin
         $display("=========================================================");
         $display("   STARTING RISC-V SOCDEBUG INTEGRATION TESTBENCH        ");
-        $display("   Using Uncore UART (uartPC16550D) for Debugger Comms   ");
         $display("=========================================================");
 
         // Initial values
@@ -296,12 +248,12 @@ module tb_debugger;
         cpu_hwdata    = 32'h0;
         cpu_hwrite    = 0;
         cpu_htrans    = 2'b00; // IDLE
-        cpu_hsize     = 3'b010; // 32-bit
+        cpu_hsize     = 3'b010;
         cpu_hburst    = 3'b000;
-        cpu_hprot     = 4'b0011;
+        cpu_hprot     = 4'b0000;
         cpu_hmastlock = 0;
 
-        // Reset Pulse
+        // Reset system
         #200;
         rst_n = 1;
         $display("[TB] System reset released at %0t ps", $time);
@@ -329,18 +281,18 @@ module tb_debugger;
         $display("[TB] Preloaded Dummy Multiplier: OpA = 7, OpB = 6 -> Expected Product = 42 (0x2A)");
 
         // Wait for Debugger startup banner to complete
-        $display("[TB] Waiting for startup banner to complete via Uncore UART...");
+        $display("[TB] Waiting for startup banner to complete...");
         wait (dut_debugger.u_socdebug_ahb.u_adp_control.banner == 1'b0);
         $display("[TB] Startup banner complete at %0t ps", $time);
 
         // Wake up ADP command prompt with Escape char
-        $display("[TB] Sending ESC to enter ADP mode via Uncore UART...");
+        $display("[TB] Sending ESC to enter ADP mode...");
         send_uart_byte(8'h1b);
         wait_for_prompt();
 
         // TEST 1: HALT CORE
         // Send command: C 0202\n (Set bit 1 of GPO8 to assert core_halt_o)
-        $display("\n--- TEST 1: HALT CORE VIA UNCORE UART ---");
+        $display("\n--- TEST 1: HALT CORE VIA UART ---");
         $display("[TB] Sending 'C 0202\\n' to assert core_halt_o...");
         send_uart_string("C 0202\n");
 
@@ -376,7 +328,7 @@ module tb_debugger;
 
         // TEST 3: RESUME CORE
         // Send command: C 0102\n (Clear bit 1 of GPO8 to deassert core_halt_o)
-        $display("\n--- TEST 3: RESUME CORE VIA UNCORE UART ---");
+        $display("\n--- TEST 3: RESUME CORE VIA UART ---");
         $display("[TB] Sending 'C 0102\\n' to deassert core_halt_o...");
         send_uart_string("C 0102\n");
 

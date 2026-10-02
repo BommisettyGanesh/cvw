@@ -39,16 +39,10 @@ a) Hardware Core Halt & Resume Support:
      Execute, Memory, Writeback) in place without flushing.
    - Deasserting 'core_halt_o' resumes execution from the exact instruction cycle.
 
-b) Existing Uncore UART Integration (Redesigned):
-   - Rather than having the debugger use its own separate UART transceiver
-     (socdebug_uart.v) and requiring dedicated external physical pins, the debugger
-     logic has been redesigned to transfer data directly to/from the existing
-     16550-compatible UART in the uncore subsystem (uartPC16550D.sv / uart_apb.sv).
-   - External communication uses the SoC's existing physical pins: UARTSin and UARTSout.
-   - Debugger TX: transfers byte stream directly to the uncore UART transmitter FIFO/holding
-     register when ready, serializing onto UARTSout.
-   - Debugger RX: uncore UART captures deserialized incoming bytes from UARTSin and
-     transfers them directly into the ADP command parser stream.
+b) Direct UART Transceiver Integration (socdebug_uart.v):
+   - Bridges physical serial pins (uart_rx, uart_tx) directly to the ADP byte
+     stream (COMRX/COMTX).
+   - Configurable CLK_FREQ and BAUD_RATE (default: 50 MHz, 115200 baud).
 
 c) Dedicated 2-Master AHB-Lite Bus Arbiter/Mux (ahb_mux.sv):
    - Connects Master 0 (RISC-V CPU Core) and Master 1 (Debugger).
@@ -65,13 +59,11 @@ d) Dedicated Accelerator Memory Space (0x30000000 - 0x30FFFFFF):
 --------------------------------------------------------------------------------
 3. SIGNAL CONNECTION GUIDE FOR wallypipelinedsoc.sv
 --------------------------------------------------------------------------------
-The debugger is integrated inside wallypipelinedsoc.sv as follows:
+When you are ready to instantiate the debugger inside wallypipelinedsoc.sv,
+connect the ports as follows:
 
 1) Instantiate riscv_debugger_top:
-   wire [7:0] dbg_uart_tx_data, dbg_uart_rx_data;
-   wire       dbg_uart_tx_valid, dbg_uart_tx_ready;
-   wire       dbg_uart_rx_valid, dbg_uart_rx_ready;
-   wire       dbg_core_halt, dbg_core_reset;
+   wire dbg_core_halt;
    wire [31:0] dbg_haddr, dbg_hwdata, dbg_hrdata;
    wire [1:0]  dbg_htrans;
    wire [2:0]  dbg_hsize, dbg_hburst;
@@ -79,18 +71,16 @@ The debugger is integrated inside wallypipelinedsoc.sv as follows:
    wire        dbg_hwrite, dbg_hmastlock, dbg_hready, dbg_hresp;
 
    riscv_debugger_top #(
+       .CLK_FREQ    (50_000_000),
+       .BAUD_RATE   (115200),
        .PROMPT_CHAR ("]")
    ) u_debugger (
        .clk             (HCLK),
        .rst_n           (HRESETn),
-       .uart_rx_data    (dbg_uart_rx_data),
-       .uart_rx_valid   (dbg_uart_rx_valid),
-       .uart_rx_ready   (dbg_uart_rx_ready),
-       .uart_tx_data    (dbg_uart_tx_data),
-       .uart_tx_valid   (dbg_uart_tx_valid),
-       .uart_tx_ready   (dbg_uart_tx_ready),
+       .uart_rx         (DEBUG_UART_RX_PIN), // From external pin or USB-UART
+       .uart_tx         (DEBUG_UART_TX_PIN), // To external pin or USB-UART
        .core_halt_o     (dbg_core_halt),
-       .core_reset_o    (dbg_core_reset),
+       .core_reset_o    (),
        .core_halted_i   (dbg_core_halt),
        .DEBUG_HADDR     (dbg_haddr),
        .DEBUG_HBURST    (dbg_hburst),
@@ -225,7 +215,7 @@ Usage examples:
 --------------------------------------------------------------------------------
 To compile and run the self-checking testbench:
   cd /home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src/debugger
-  vlog -sv socdebug_adp_control.v socdebug_ahb.v riscv_debugger_top.sv ahb_mux.sv ../accelerator/multiplier_ahb.sv ../uncore/uartPC16550D.sv ../generic/flop/flopr.sv tb/tb_debugger.sv
+  vlog -sv socdebug_adp_control.v socdebug_ahb.v socdebug_uart.v riscv_debugger_top.sv ahb_mux.sv ../accelerator/multiplier_ahb.sv tb/tb_debugger.sv
   vsim -c -do "run -all; quit" tb_debugger
 
 Verified outputs:

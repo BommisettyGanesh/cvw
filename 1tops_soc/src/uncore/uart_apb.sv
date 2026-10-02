@@ -41,19 +41,7 @@ module uart_apb import cvw::*; #(parameter cvw_t P) (
   output logic                PREADY,
   input  logic                SIN, DSRb, DCDb, CTSb, RIb,           // from E1A driver from RS232 interface
   output logic                SOUT, RTSb, DTRb,                     // to E1A driver to RS232 interface
-  output logic                OUT1b, OUT2b, INTR, TXRDYb, RXRDYb,   // to CPU
-//
-//
-  // Debugger Interface to UART
-  input  logic [7:0]          dbg_tx_data,
-  input  logic                dbg_tx_valid,
-  output logic                dbg_tx_ready,
-  output logic [7:0]          dbg_rx_data,
-  output logic                dbg_rx_valid,
-  input  logic                dbg_rx_ready
-//
-//
-);
+  output logic                OUT1b, OUT2b, INTR, TXRDYb, RXRDYb);  // to CPU
 
   // UART interface signals
   logic [2:0]      entry;
@@ -83,14 +71,7 @@ module uart_apb import cvw::*; #(parameter cvw_t P) (
     .BAUDOUTb, .RCLK(BAUDOUTb),
     // E1A Driver
     .SIN, .DSRb, .DCDb, .CTSb, .RIb,
-    .SOUT, .RTSb, .DTRb, .OUT1b, .OUT2b,
-//
-//
-    // Debugger Interface
-    .dbg_tx_data, .dbg_tx_valid, .dbg_tx_ready,
-    .dbg_rx_data, .dbg_rx_valid, .dbg_rx_ready
-//
-//
+    .SOUT, .RTSb, .DTRb, .OUT1b, .OUT2b
 );
 
 endmodule

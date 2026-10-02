@@ -182,20 +182,18 @@ config/deriv
 sim/slack-notifier/slack-webhook-url.txt
 docs/docker/buildroot-config-src
 docs/docker/testvector-generation
-#
-#
+
+# Debugger documents & media
 1tops_soc/src/debugger/*.docx
 1tops_soc/src/debugger/*.pptx
-1tops_soc/src/debugger/*.svg
-1tops_soc/src/debugger/*.png
-1tops_soc/src/debugger/**.docx
-1tops_soc/src/debugger/**.pptx
-1tops_soc/src/debugger/**.svg
-1tops_soc/src/debugger/**.png
+1tops_soc/src/debugger/**/*.docx
+1tops_soc/src/debugger/**/*.pptx
 1tops_soc/src/debugger/**/~$*.docx
 1tops_soc/src/debugger/**/~$*.pptx
-#
-#
+1tops_soc/src/debugger/*.svg
+1tops_soc/src/debugger/*.png
+1tops_soc/src/debugger/**/*.svg
+1tops_soc/src/debugger/**/*.png
 
 # Vivado Logs, Journals, and Temporary Files
 *.jou
