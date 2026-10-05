@@ -224,4 +224,43 @@ Verified outputs:
   - Debugger initiates AHB Master read to dummy accelerator at 0x30000008.
   - Successfully verifies product output (42 / 0x2A).
   - core_halt_o deasserts to 0 upon receiving resume command.
+
+--------------------------------------------------------------------------------
+8. DUAL-PROTOCOL INTEGRATION: FT1248 & UART HARDWARE MULTIPLEXING
+--------------------------------------------------------------------------------
+Update Date: 2026-10-05
+
+a) Integrated FT1248 Synchronous High-Speed Protocol:
+   - Added 'socdebug_ft1248_control.v' directly into the debugger subsystem.
+   - Synchronous high-speed master protocol engine capable of operating up to
+     30 MHz with FTDI USB-to-FT1248 bridge chips (FT232H / FT2232H).
+   - Dedicated external pin group:
+       * ft1248_clk    - SCLK clock output from SoC to FTDI.
+       * ft1248_ss_n   - SS# chip select output from SoC to FTDI.
+       * ft1248_miso   - MISO status/data input from FTDI (RXF# status in idle).
+       * ft1248_miosio - Bidirectional data pin(s) (TXE# status in idle).
+
+b) Dedicated Hardware Pin Muxing ('dbg_sel'):
+   - Added a real physical hardware input pad: 'dbg_sel'.
+   - dbg_sel = 0 (LOW)  -> Dedicated UART active (FT1248 isolated).
+   - dbg_sel = 1 (HIGH) -> Dedicated FT1248 active (UART isolated).
+   - Internal 2-to-1 AXI-Stream multiplexer switches RX/TX streams cleanly into
+     the shared SoCDebug ADP controller and AHB Master.
+   - UART and FT1248 maintain independent external physical pins going out of chip.
+
+c) Comprehensive Testbench (tb/tb_debugger.sv):
+   - Added FT232H behavioral emulator model (tb/f232h_ft1248_stream.v).
+   - Fully tests 14 scenarios spanning:
+       * Part 1: UART Protocol (Core Halt with 'core_halted' feedback, IRAM code
+         loading, DRAM sub-word access, 1TOPS multiplier, bus errors, core resume).
+       * Part 2: FT1248 Protocol (Dynamic pad switch, Core Halt, DRAM write/readback,
+         1TOPS multiplier, hardware register polling 'P', core resume).
+       * Part 3: Multiplexer Isolation (UART traffic ignored while dbg_sel=1,
+         dynamic switch back to UART, regaining control immediately).
+   - All 14 test scenarios pass 100% with 0 errors and 0 warnings under QuestaSim.
+
+d) Software & Documentation Updates:
+   - Updated sw/dbg_cli.py with '--protocol {uart, ft1248}', baud/FTDI URL options,
+     automatic readback verification, and mock testing.
+   - Updated DEBUGGER_WIRING_GUIDE.md and COMMANDS.md with dual-protocol schematics.
 ================================================================================

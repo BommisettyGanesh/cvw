@@ -1,0 +1,21 @@
+# Document and Presentation Generation Scripts
+build_docs.py
+build_*.py
+*ppt*.py
+*docx*.py
+
+# Word and PowerPoint Documents
+*.docx
+*.pptx
+~$*.docx
+~$*.pptx
+
+# Rendered Images and Diagrams
+*.png
+*.svg
+
+# Simulation Artifacts
+transcript
+work/
+vsim.wlf
+*.wlf

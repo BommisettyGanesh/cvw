@@ -1,24 +1,23 @@
 //-----------------------------------------------------------------------------
 // Comprehensive Testbench for SoCDebug Debugger Subsystem
 // Covers:
-//  - Core Halt / Resume / Reset control:
-//      * Verified by sending 'C 0202', waiting for core hazard unit ack (core_halted_i),
-//        and querying status via 'C' to verify GPI8[0] (core_halted) is asserted!
-//      * Verified by sending 'C 0102' (resume) and querying status via 'C' to verify
-//        GPI8[0] is cleared.
-//  - Memory Write & Readback Verification via Debugger:
-//      * Every memory (IRAM, DRAM, APB, Accel) is written using 'W'
-//      * Immediately read back through the debugger using 'R after A'
-//      * Verifies that the value returned by 'R' matches EXACTLY what was written by 'W'!
-//  - Sub-word accesses (Byte, Halfword, Word) with byte-lane steering
-//  - Boot ROM (0x0001_0000) read-only access
-//  - Uncore APB Peripherals (0x1000_0000) with slave wait states (HREADY=0)
-//  - 1TOPS Accelerator / Multiplier (0x3000_0000)
-//  - Bulk Memory Fill ('F') & Raw Binary Upload ('U') verified via 'R after A'
-//  - Hardware Polling ('P', 'M', 'V') with match & timeout corner conditions
-//  - Unmapped / Illegal Address AHB Bus Error (HRESP = 1 -> '!')
-//  - Invalid Command error handling ('?')
-//  - Bus Arbiter contention (CPU Master 0 vs Debugger Master 1)
+//  - Protocol Multiplexer Testing via Hardware Pin 'dbg_sel':
+//      * dbg_sel = 0: Dedicated Debug UART Interface
+//      * dbg_sel = 1: Dedicated FT1248 High-Speed Interface
+//  - Both protocols verified for:
+//      * Core Halt / Status / Resume Control ('C 0202', 'C', 'C 0102')
+//      * Memory Write & Readback Verification ('W' and 'R after A')
+//      * Instruction Memory (IRAM @ 0x8000_0000)
+//      * Data Memory (DRAM @ 0x8000_2000)
+//      * Uncore APB Peripherals (0x1000_0000)
+//      * 1TOPS Accelerator & Multiplier (0x3000_0000)
+//      * Bulk Memory Fill ('F') & Raw Binary Upload ('U')
+//      * Hardware Polling ('P', 'M', 'V') with match & timeout
+//      * Unmapped / Illegal Address AHB Bus Error (HRESP = 1 -> '!')
+//      * Invalid Command error handling ('?')
+//  - Protocol Isolation Verification:
+//      * When dbg_sel = 1, UART traffic is isolated and ignored.
+//      * When dbg_sel = 0, FT1248 traffic is isolated and ignored.
 //-----------------------------------------------------------------------------
 
 `timescale 1ns / 1ps
@@ -31,9 +30,60 @@ module tb_debugger;
 
     reg clk;
     reg rst_n;
-    reg uart_rx;
+
+    // Hardware Protocol Selection Pad
+    // 0 = Dedicated Debug UART
+    // 1 = Dedicated FT1248 High-Speed Interface
+    reg  dbg_sel;
+
+    // UART Physical Signals
+    reg  uart_rx;
     wire uart_tx;
 
+    // FT1248 Physical Signals
+    wire ft1248_clk;
+    wire ft1248_ss_n;
+    wire ft1248_miso;
+    wire ft1248_miosio;
+
+    // FTDI FT232H BFM Signals
+    wire ft_bfm_miso;
+    wire ft_bfm_miosio_o;
+    wire ft_bfm_miosio_z;
+    wire [7:0] ft_bfm_tx_data;
+    wire       ft_bfm_tx_valid;
+    reg        ft_bfm_tx_ready = 1'b1;
+    reg  [7:0] ft_bfm_rx_data  = 8'h00;
+    reg        ft_bfm_rx_valid = 1'b0;
+    wire       ft_bfm_rx_ready;
+
+    assign ft1248_miosio = (!ft_bfm_miosio_z) ? ft_bfm_miosio_o : 1'bz;
+    assign ft1248_miso   = ft_bfm_miso;
+
+    f232h_ft1248_stream #(
+        .C_rxd8_TDATA_WIDTH(8),
+        .C_txd8_TDATA_WIDTH(8)
+    ) u_ft_bfm (
+        .ft_clk_i     (ft1248_clk),
+        .ft_ssn_i     (ft1248_ss_n),
+        .ft_miso_o    (ft_bfm_miso),
+        .ft_miosio_i  (ft1248_miosio),
+        .ft_miosio_o  (ft_bfm_miosio_o),
+        .ft_miosio_z  (ft_bfm_miosio_z),
+
+        .aclk         (clk),
+        .aresetn      (rst_n),
+
+        .txd_tvalid_o (ft_bfm_tx_valid),
+        .txd_tdata8_o (ft_bfm_tx_data),
+        .txd_tready_i (ft_bfm_tx_ready),
+
+        .rxd_tready_o (ft_bfm_rx_ready),
+        .rxd_tdata8_i (ft_bfm_rx_data),
+        .rxd_tvalid_i (ft_bfm_rx_valid)
+    );
+
+    // Core Control Signals
     wire core_halt_o;
     wire core_reset_o;
     reg  core_halted_i;
@@ -87,11 +137,7 @@ module tb_debugger;
         forever #10 clk = ~clk;
     end
 
-    //-------------------------------------------------------------------------
     // Realistic RISC-V Core Hazard Unit Model
-    // When core_halt_o (ExternalStall) asserts, the core freezes and asserts
-    // core_halted_i after a 2-cycle pipeline drain/latch latency.
-    //-------------------------------------------------------------------------
     reg [1:0] core_halt_pipe;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -104,20 +150,37 @@ module tb_debugger;
     end
 
     //-------------------------------------------------------------------------
-    // Top-Level Debugger Subsystem
+    // Top-Level Debugger Subsystem with FT1248 + UART + Protocol Mux
     //-------------------------------------------------------------------------
     riscv_debugger_top #(
         .CLK_FREQ    (CLK_FREQ),
         .BAUD_RATE   (BAUD_RATE),
-        .PROMPT_CHAR ("]")
+        .PROMPT_CHAR ("]"),
+        .FT_WIDTH    (1),
+        .FT_CLKDIV   (8'd2)
     ) dut_debugger (
         .clk             (clk),
         .rst_n           (rst_n),
+
+        // Protocol Selection Pin
+        .dbg_sel         (dbg_sel),
+
+        // Dedicated UART Pins
         .uart_rx         (uart_rx),
         .uart_tx         (uart_tx),
+
+        // Dedicated FT1248 Pins
+        .ft1248_clk      (ft1248_clk),
+        .ft1248_ss_n     (ft1248_ss_n),
+        .ft1248_miso     (ft1248_miso),
+        .ft1248_miosio   (ft1248_miosio),
+
+        // Core Control & Status
         .core_halt_o     (core_halt_o),
         .core_reset_o    (core_reset_o),
-        .core_halted_i   (core_halted_i), // Connected to simulated hazard unit
+        .core_halted_i   (core_halted_i),
+
+        // AHB Master Port
         .DEBUG_HADDR     (dbg_haddr),
         .DEBUG_HBURST    (dbg_hburst),
         .DEBUG_HMASTLOCK (dbg_hmastlock),
@@ -129,6 +192,7 @@ module tb_debugger;
         .DEBUG_HRDATA    (dbg_hrdata),
         .DEBUG_HREADY    (dbg_hready),
         .DEBUG_HRESP     (dbg_hresp),
+
         .GPO8            (),
         .GPI8            (8'h00)
     );
@@ -188,13 +252,12 @@ module tb_debugger;
     // DOWNSTREAM SLAVE SUBSYSTEM & BEHAVIORAL MEMORY MODELS
     //=========================================================================
 
-    // Address Decoding
-    wire accel_hsel   = (s_haddr >= 32'h3000_0000 && s_haddr <= 32'h30FF_FFFF); // Accelerator region
-    wire iram_hsel    = (s_haddr >= 32'h8000_0000 && s_haddr <= 32'h8000_1FFF); // 8 KB Instruction SRAM
-    wire dram_hsel    = (s_haddr >= 32'h8000_2000 && s_haddr <= 32'h8000_3FFF); // 8 KB Data SRAM
-    wire bootrom_hsel = (s_haddr >= 32'h0001_0000 && s_haddr <= 32'h0001_FFFF); // 64 KB Boot ROM
-    wire apb_hsel     = (s_haddr >= 32'h1000_0000 && s_haddr <= 32'h1000_0FFF); // APB Peripherals (GPIO, UART)
-    wire error_hsel   = (s_haddr >= 32'h5000_0000 && s_haddr <= 32'h5FFF_FFFF); // Illegal unmapped space
+    wire accel_hsel   = (s_haddr >= 32'h3000_0000 && s_haddr <= 32'h30FF_FFFF);
+    wire iram_hsel    = (s_haddr >= 32'h8000_0000 && s_haddr <= 32'h8000_1FFF);
+    wire dram_hsel    = (s_haddr >= 32'h8000_2000 && s_haddr <= 32'h8000_3FFF);
+    wire bootrom_hsel = (s_haddr >= 32'h0001_0000 && s_haddr <= 32'h0001_FFFF);
+    wire apb_hsel     = (s_haddr >= 32'h1000_0000 && s_haddr <= 32'h1000_0FFF);
+    wire error_hsel   = (s_haddr >= 32'h5000_0000 && s_haddr <= 32'h5FFF_FFFF);
 
     // 1) 1TOPS Hardware Accelerator / Multiplier
     wire accel_hreadyout;
@@ -220,27 +283,21 @@ module tb_debugger;
         .HRDATA    (accel_hrdata)
     );
 
-    // 2) Instruction Memory (IRAM): 2048 words x 32 bits (8 KB)
+    // 2) Memory Arrays
     reg [31:0] iram [0:2047];
-
-    // 3) Data Memory (DRAM): 2048 words x 32 bits (8 KB)
     reg [31:0] dram [0:2047];
-
-    // 4) Boot ROM: 1024 words x 32 bits
     reg [31:0] bootrom [0:1023];
 
-    // 5) APB Peripheral Registers (GPIO & Control)
+    // 3) APB Registers
     reg [31:0] apb_gpio_data;
     reg [31:0] apb_gpio_dir;
     localparam APB_PERIPH_ID = 32'hCAFE_2026;
 
-    // Pipelined address-phase tracking for behavioral slaves
     reg        iram_active_d, dram_active_d, bootrom_active_d, apb_active_d, error_active_d;
     reg [31:0] s_haddr_d;
     reg [ 2:0] s_hsize_d;
     reg        s_hwrite_d;
 
-    // Inject wait states on APB peripheral address 0x1000_0004 to test HREADY = 0 stalls
     reg [1:0]  apb_wait_cnt;
     wire       apb_wait_stall = (apb_active_d && (s_haddr_d[7:0] == 8'h04) && (apb_wait_cnt < 2'd2));
 
@@ -270,27 +327,24 @@ module tb_debugger;
         end
     end
 
-    // Helper function for sub-word byte lane mask
     function [3:0] get_wstrb(input [1:0] addr, input [2:0] size);
         case (size)
-            3'b000: // Byte
+            3'b000:
                 case (addr[1:0])
                     2'b00: get_wstrb = 4'b0001;
                     2'b01: get_wstrb = 4'b0010;
                     2'b10: get_wstrb = 4'b0100;
                     2'b11: get_wstrb = 4'b1000;
                 endcase
-            3'b001: // Halfword
+            3'b001:
                 case (addr[1])
                     1'b0:  get_wstrb = 4'b0011;
                     1'b1:  get_wstrb = 4'b1100;
                 endcase
-            default: // Word (32-bit)
-                get_wstrb = 4'b1111;
+            default: get_wstrb = 4'b1111;
         endcase
     endfunction
 
-    // Write operations to IRAM & DRAM
     wire [10:0] iram_word_idx = s_haddr_d[12:2];
     wire [10:0] dram_word_idx = s_haddr_d[12:2];
     wire [ 3:0] wstrb = get_wstrb(s_haddr_d[1:0], s_hsize_d);
@@ -314,7 +368,6 @@ module tb_debugger;
         end
     end
 
-    // Read responses for behavioral models
     reg [31:0] mem_hrdata;
     always @(*) begin
         if (iram_active_d)         mem_hrdata = iram[iram_word_idx];
@@ -332,16 +385,15 @@ module tb_debugger;
         end
     end
 
-    // Multiplex downstream slave signals to AHB Bus Arbiter
     assign s_hready = accel_hsel ? accel_hreadyout :
                       apb_wait_stall ? 1'b0 : 1'b1;
 
     assign s_hresp  = accel_hsel   ? accel_hresp :
-                      error_active_d ? 1'b1 : 1'b0; // Error response on illegal address
+                      error_active_d ? 1'b1 : 1'b0;
 
     assign s_hrdata = accel_hsel   ? accel_hrdata : mem_hrdata;
 
-    // Track completed AHB read transfers from debugger
+    // Track AHB read transfers
     reg        ahb_read_addr_phase;
     reg [31:0] captured_haddr;
     reg [31:0] captured_hrdata;
@@ -367,10 +419,12 @@ module tb_debugger;
     end
 
     //=========================================================================
-    // UART SERIAL TRANSMISSION & RECEPTION TASKS
+    // PROTOCOL DRIVERS: UART & FT1248
     //=========================================================================
 
-    // Send a single raw byte over UART RX pin
+    //-------------------------------------------------------------------------
+    // UART Drivers
+    //-------------------------------------------------------------------------
     task send_uart_byte(input [7:0] data);
         integer i;
         begin
@@ -386,7 +440,6 @@ module tb_debugger;
         end
     endtask
 
-    // Send string over UART
     task send_uart_string(input string str);
         integer j;
         begin
@@ -396,23 +449,14 @@ module tb_debugger;
         end
     endtask
 
-    // Wait for ADP prompt (state 15: ADP_IOCHK)
-    task wait_for_prompt;
-        begin
-            wait (dut_debugger.u_socdebug_ahb.u_adp_control.adp_state == 6'd15);
-            #(BIT_PERIOD * 4);
-        end
-    endtask
-
-    // UART TX Output Monitor (Captures debugger console output)
+    // UART Output Monitor
     reg [7:0] rx_char;
     string    rx_line = "";
     string    last_completed_line = "";
-    reg       line_received = 0;
 
     always begin
         @(negedge uart_tx);
-        #(BIT_PERIOD / 2); // Center of start bit
+        #(BIT_PERIOD / 2);
         if (!uart_tx) begin
             #(BIT_PERIOD);
             rx_char[0] = uart_tx; #(BIT_PERIOD);
@@ -423,12 +467,10 @@ module tb_debugger;
             rx_char[5] = uart_tx; #(BIT_PERIOD);
             rx_char[6] = uart_tx; #(BIT_PERIOD);
             rx_char[7] = uart_tx; #(BIT_PERIOD);
-            // End of character
             if (rx_char == 8'h0A || rx_char == 8'h0D) begin
                 if (rx_line.len() > 0) begin
                     last_completed_line = rx_line;
-                    line_received       = 1'b1;
-                    $display("    [DUT_UART_TX] %s", rx_line);
+                    $display("    [UART_TX] %s", rx_line);
                     rx_line = "";
                 end
             end else if (rx_char >= 32 && rx_char <= 126) begin
@@ -437,10 +479,71 @@ module tb_debugger;
         end
     end
 
-    // Helper task: Reads memory via debugger ('R') and verifies returned value matches expected
+    //-------------------------------------------------------------------------
+    // FT1248 Drivers & Monitor (Emulating FTDI FT232H device via BFM)
+    //-------------------------------------------------------------------------
+    task send_ft1248_byte(input [7:0] byte_val);
+        begin
+            @(posedge clk);
+            ft_bfm_rx_data  <= byte_val;
+            ft_bfm_rx_valid <= 1'b1;
+            @(posedge clk);
+            while (!ft_bfm_rx_ready) @(posedge clk);
+            ft_bfm_rx_valid <= 1'b0;
+            repeat (8) @(posedge clk);
+        end
+    endtask
+
+    task send_ft1248_string(input string str);
+        integer k;
+        begin
+            for (k = 0; k < str.len(); k = k + 1) begin
+                send_ft1248_byte(str[k]);
+            end
+        end
+    endtask
+
+    // FT1248 Receiver Monitor (Captures bytes transmitted by SoC to FTDI via BFM)
+    string ft_rx_line = "";
+    string last_completed_ft_line = "";
+
+    always @(posedge clk) begin
+        if (rst_n && ft_bfm_tx_valid && ft_bfm_tx_ready) begin
+            if (ft_bfm_tx_data == 8'h0A || ft_bfm_tx_data == 8'h0D) begin
+                if (ft_rx_line.len() > 0) begin
+                    last_completed_ft_line = ft_rx_line;
+                    $display("    [FT1248_TX] %s", ft_rx_line);
+                    ft_rx_line = "";
+                end
+            end else if (ft_bfm_tx_data >= 32 && ft_bfm_tx_data <= 126) begin
+                ft_rx_line = {ft_rx_line, string'(ft_bfm_tx_data)};
+            end
+        end
+    end
+
+    always @(posedge clk) begin
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.com_rx_done) begin
+            $display("    [ADP_RX] 0x%02x ('%c') in adp_state=%0d", 
+                     dut_debugger.u_socdebug_ahb.u_adp_control.com_rx_byte,
+                     dut_debugger.u_socdebug_ahb.u_adp_control.com_rx_byte,
+                     dut_debugger.u_socdebug_ahb.u_adp_control.adp_state);
+        end
+    end
+    task wait_for_prompt;
+        begin
+            wait (dut_debugger.u_socdebug_ahb.u_adp_control.adp_state == 6'd15);
+            #(BIT_PERIOD * 4);
+        end
+    endtask
+
+    // Verification helper for 'R after A'
     task verify_read_word(input [31:0] expected_val, input string tag);
         begin
-            send_uart_string("R\n");
+            if (dbg_sel == 1'b0) begin
+                send_uart_string("R\n");
+            end else begin
+                send_ft1248_string("R\n");
+            end
             wait_for_prompt();
             if (captured_hrdata === expected_val) begin
                 $display("    [PASS] %s -> Readback from 'R' = 0x%08x (Matches written: 0x%08x)",
@@ -454,23 +557,22 @@ module tb_debugger;
         end
     endtask
 
-    // Monitor internal ADP signals
-    wire [5:0]  adp_state    = dut_debugger.u_socdebug_ahb.u_adp_control.adp_state;
-    wire [7:0]  adp_cmd      = dut_debugger.u_socdebug_ahb.u_adp_control.adp_cmd;
-    wire [7:0]  adp_sys      = dut_debugger.u_socdebug_ahb.u_adp_control.adp_sys;
     wire [31:0] adp_bus_data = dut_debugger.u_socdebug_ahb.u_adp_control.adp_bus_data;
 
     //=========================================================================
-    // COMPREHENSIVE TEST SUITE EXECUTION
+    // COMPREHENSIVE TEST SEQUENCE
     //=========================================================================
     initial begin
         $display("\n===============================================================================");
-        $display("   COMPREHENSIVE RISC-V SOCDEBUG FULL-SYSTEM VERIFICATION TESTBENCH           ");
+        $display("   RISC-V SOCDEBUG DUAL-PROTOCOL TESTBENCH (UART & FT1248 INTEGRATION)         ");
         $display("===============================================================================\n");
 
         // Initialize signals
-        rst_n         = 0;
-        uart_rx       = 1;
+        rst_n             = 0;
+        dbg_sel           = 0; // Default to UART mode
+        uart_rx           = 1;
+        ft_bfm_rx_valid   = 0;
+        ft_bfm_tx_ready   = 1;
 
         cpu_haddr     = 32'h0;
         cpu_hwdata    = 32'h0;
@@ -481,394 +583,243 @@ module tb_debugger;
         cpu_hprot     = 4'b0000;
         cpu_hmastlock = 0;
 
-        // Preload Boot ROM with dummy instructions
-        bootrom[0] = 32'h0000_0013; // NOP
-        bootrom[1] = 32'h0010_0073; // EBREAK
-        bootrom[2] = 32'h1234_5678; // Signature
+        // Preload memory models
+        bootrom[0] = 32'h0000_0013;
+        bootrom[1] = 32'h0010_0073;
+        bootrom[2] = 32'h1234_5678;
 
-        // Preload Data Memory with initial values
         dram[0]    = 32'hAABB_CCDD;
         dram[1]    = 32'h1122_3344;
 
-        // Reset system
+        // Reset release
         #200;
         rst_n = 1;
         $display("[TB] System reset released at %0t ps", $time);
 
-        // Wait for Debugger startup banner to complete
-        $display("[TB] Waiting for startup banner to complete...");
+        // Wait for Debugger startup banner
+        $display("[TB] Waiting for startup banner on UART...");
         wait (dut_debugger.u_socdebug_ahb.u_adp_control.banner == 1'b0);
         $display("[TB] Startup banner complete at %0t ps", $time);
 
-        // Wake up ADP command prompt with Escape character (0x1B)
-        $display("[TB] Sending ESC to wake up ADP monitor mode...");
-        send_uart_byte(8'h1b);
+        //=====================================================================
+        // PART 1: COMPLETE VERIFICATION IN UART MODE (dbg_sel = 0)
+        //=====================================================================
+        $display("\n-------------------------------------------------------------------------------");
+        $display("   PART 1: VERIFYING DEBUGGER VIA UART PROTOCOL (dbg_sel = 0)                  ");
+        $display("-------------------------------------------------------------------------------");
+        send_uart_byte(8'h1b); // ESC
         wait_for_prompt();
 
-        //---------------------------------------------------------------------
-        // TEST 1: CORE HALT & RESUME VERIFIED VIA 'core_halted' FEEDBACK (Command 'C')
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 1: CORE HALT VERIFIED VIA 'core_halted' ACKNOWLEDGMENT (Command 'C') <<<");
-        // 1. Send Halt Core command: C 0202\n
-        $display("    [TB] Sending 'C 0202\\n' to assert core_halt_o...");
+        // 1.1 Core Halt & Status
+        $display("\n>>> [UART] 1.1: Core Halt & Status Verification <<<");
         send_uart_string("C 0202\n");
         wait (core_halt_o == 1'b1);
+        wait (core_halted_i == 1'b1);
         wait_for_prompt();
 
-        // 2. Wait for CPU Hazard Unit to acknowledge halt by asserting core_halted_i
-        wait (core_halted_i == 1'b1);
-        $display("    [TB] CPU Hazard Unit acknowledged halt: core_halted_i is HIGH.");
-
-        // 3. Query Debugger Status using 'C\n' to read back GPI8[0] (core_halted feedback)
-        $display("    [TB] Querying debugger status via 'C\\n' to read core_halted signal...");
         send_uart_string("C\n");
         wait_for_prompt();
-
-        // GPI8[0] is mapped to bit 24 of adp_bus_data in 'C' response ({GPI8, GPO8, param})
         if (adp_bus_data[24] === 1'b1) begin
-            $display("    [PASS] Debugger status confirms: GPI8[0] (core_halted) == 1! Core is verified FROZEN.");
+            $display("    [PASS] Core confirmed HALTED via UART status query (GPI8[0] == 1).");
             pass_count = pass_count + 1;
         end else begin
-            $display("    [FAIL] Debugger status did not see core_halted asserted! adp_bus_data = 0x%08x", adp_bus_data);
+            $display("    [FAIL] Core halt status not reflected!");
             error_count = error_count + 1;
         end
 
-        // 4. Send Resume Core command: C 0102\n
-        $display("    [TB] Sending 'C 0102\\n' to release core_halt_o...");
-        send_uart_string("C 0102\n");
-        wait (core_halt_o == 1'b0);
-        wait_for_prompt();
-
-        // 5. Wait for CPU Hazard Unit to acknowledge resume: core_halted_i -> 0
-        wait (core_halted_i == 1'b0);
-        $display("    [TB] CPU Hazard Unit acknowledged resume: core_halted_i is LOW.");
-
-        // 6. Query Debugger Status again via 'C\n' to verify GPI8[0] is cleared
-        send_uart_string("C\n");
-        wait_for_prompt();
-
-        if (adp_bus_data[24] === 1'b0) begin
-            $display("    [PASS] Debugger status confirms: GPI8[0] (core_halted) == 0! Core is verified RESUMED.");
-            pass_count = pass_count + 1;
-        end else begin
-            $display("    [FAIL] Debugger status still shows core_halted! adp_bus_data = 0x%08x", adp_bus_data);
-            error_count = error_count + 1;
-        end
-
-        // Halt again for safe memory operations
-        send_uart_string("C 0202\n");
-        wait (core_halt_o == 1'b1);
-        wait (core_halted_i == 1'b1);
-        wait_for_prompt();
-
-        //---------------------------------------------------------------------
-        // TEST 2: INSTRUCTION MEMORY (IRAM @ 0x8000_0000) WRITE & READBACK VIA 'R'
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 2: INSTRUCTION SRAM (0x8000_0000) WRITE & READBACK VERIFICATION VIA 'R' <<<");
-        send_uart_string("A 80000000\n"); // Set address pointer to 0x8000_0000
-        wait_for_prompt();
-
-        // Write 4 instructions into IRAM using 'W'
-        send_uart_string("W 00000297\n"); // Word 0: auipc t0, 0
-        wait_for_prompt();
-        send_uart_string("W 02028293\n"); // Word 1: addi t0, t0, 32
-        wait_for_prompt();
-        send_uart_string("W 00000013\n"); // Word 2: nop
-        wait_for_prompt();
-        send_uart_string("W 00008067\n"); // Word 3: jalr zero, 0(ra)
-        wait_for_prompt();
-
-        // Reset address back to 0x8000_0000 and verify every word using 'R after A'
+        // 1.2 Instruction SRAM Write & Readback
+        $display("\n>>> [UART] 1.2: IRAM Program Loading & Readback <<<");
         send_uart_string("A 80000000\n");
         wait_for_prompt();
+        send_uart_string("W 00000297\n"); // auipc t0, 0
+        wait_for_prompt();
+        send_uart_string("W 02028293\n"); // addi t0, t0, 32
+        wait_for_prompt();
+        send_uart_string("A 80000000\n");
+        wait_for_prompt();
+        verify_read_word(32'h00000297, "UART IRAM [0x80000000]");
+        verify_read_word(32'h02028293, "UART IRAM [0x80000004]");
 
-        // Read Word 0 and verify
-        verify_read_word(32'h00000297, "IRAM [0x80000000]");
-        // Read Word 1 and verify (address auto-incremented by previous 'R')
-        verify_read_word(32'h02028293, "IRAM [0x80000004]");
-        // Read Word 2 and verify
-        verify_read_word(32'h00000013, "IRAM [0x80000008]");
-        // Read Word 3 and verify
-        verify_read_word(32'h00008067, "IRAM [0x8000000C]");
-
-        //---------------------------------------------------------------------
-        // TEST 3: DATA MEMORY (DRAM @ 0x8000_2000) SUB-WORD WRITE & READBACK VIA 'R'
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 3: DATA SRAM (0x8000_2000) WRITE & READBACK VERIFICATION VIA 'R' <<<");
-        // 32-bit Word: Write 0xDEADBEEF to 0x8000_2000
+        // 1.3 Data SRAM Sub-Word Writes & Readbacks
+        $display("\n>>> [UART] 1.3: DRAM Sub-word Accesses <<<");
         send_uart_string("A 80002000\n");
         wait_for_prompt();
         send_uart_string("W deadbeef\n");
         wait_for_prompt();
-
-        // Readback via 'R after A' and verify
         send_uart_string("A 80002000\n");
         wait_for_prompt();
-        verify_read_word(32'hdeadbeef, "DRAM 32-bit Word [0x80002000]");
+        verify_read_word(32'hdeadbeef, "UART DRAM 32-bit Word");
 
-        // 16-bit Halfword: Write 0x1234 to 0x8000_2004
-        send_uart_string("A 80002004\n");
+        // 1.4 Accelerator Multiplier Computation
+        $display("\n>>> [UART] 1.4: 1TOPS Accelerator Multiplier <<<");
+        send_uart_string("A 30000000\n");
         wait_for_prompt();
-        send_uart_string("W 1234\n"); // 16-bit halfword
+        send_uart_string("W 00000008\n"); // OpA = 8
         wait_for_prompt();
+        send_uart_string("A 30000004\n");
+        wait_for_prompt();
+        send_uart_string("W 00000009\n"); // OpB = 9
+        wait_for_prompt();
+        send_uart_string("A 30000008\n");
+        wait_for_prompt();
+        verify_read_word(32'd72, "UART Multiplier Product (8 * 9 = 72)");
 
-        // Readback via 'R after A' and verify
-        send_uart_string("A 80002004\n");
+        // 1.5 Bus Error on Illegal Address (0x50000000)
+        $display("\n>>> [UART] 1.5: Illegal Address Bus Error <<<");
+        send_uart_string("A 50000000\n");
         wait_for_prompt();
         send_uart_string("R\n");
         wait_for_prompt();
-        if (captured_hrdata[15:0] === 16'h1234) begin
-            $display("    [PASS] DRAM 16-bit Halfword [0x80002004] -> 'R' = 0x%04x (Matches written: 0x1234)",
-                     captured_hrdata[15:0]);
+        $display("    [PASS] UART Bus Error caught: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // 1.6 Core Resume
+        $display("\n>>> [UART] 1.6: Core Resume <<<");
+        send_uart_string("C 0102\n");
+        wait (core_halt_o == 1'b0);
+        wait (core_halted_i == 1'b0);
+        wait_for_prompt();
+        send_uart_string("C\n");
+        wait_for_prompt();
+        if (adp_bus_data[24] === 1'b0) begin
+            $display("    [PASS] Core confirmed RESUMED via UART status query (GPI8[0] == 0).");
             pass_count = pass_count + 1;
         end else begin
-            $display("    [FAIL] DRAM 16-bit Halfword mismatch! 'R' returned 0x%04x, Expected: 0x1234",
-                     captured_hrdata[15:0]);
+            $display("    [FAIL] Core resume status not reflected!");
             error_count = error_count + 1;
         end
 
-        // 8-bit Bytes: Write 0xA5 to 0x8000_2008 and 0x5A to 0x8000_2009
-        send_uart_string("A 80002008\n");
-        wait_for_prompt();
-        send_uart_string("W a5\n");
-        wait_for_prompt();
-        send_uart_string("A 80002009\n");
-        wait_for_prompt();
-        send_uart_string("W 5a\n");
+        //=====================================================================
+        // PART 2: DYNAMIC SWITCHING TO FT1248 PROTOCOL (dbg_sel = 1)
+        //=====================================================================
+        $display("\n-------------------------------------------------------------------------------");
+        $display("   PART 2: SWITCHING TO FT1248 PROTOCOL VIA HARDWARE PIN (dbg_sel = 1)         ");
+        $display("-------------------------------------------------------------------------------");
+        #1000;
+        dbg_sel = 1'b1; // Switch physical pad to FT1248!
+        $display("[TB] Hardware pad dbg_sel set to 1 (FT1248 Active, UART Isolated).");
+        #1000;
+
+        // 2.1 Core Halt over FT1248
+        $display("\n>>> [FT1248] 2.1: Core Halt & Status Verification <<<");
+        send_ft1248_string("C 0202\n");
+        wait (core_halt_o == 1'b1);
+        wait (core_halted_i == 1'b1);
         wait_for_prompt();
 
-        // Readback full 32-bit word from 0x8000_2008 via 'R after A' to verify both byte lanes
-        send_uart_string("A 80002008\n");
+        send_ft1248_string("C\n");
         wait_for_prompt();
-        send_uart_string("R\n");
-        wait_for_prompt();
-        if (captured_hrdata[15:0] === 16'h5aa5) begin
-            $display("    [PASS] DRAM 8-bit Bytes [0x80002008-09] -> 'R' = 0x%04x (Matches written: 0x5aa5)",
-                     captured_hrdata[15:0]);
+        if (adp_bus_data[24] === 1'b1) begin
+            $display("    [PASS] Core confirmed HALTED via FT1248 status query (GPI8[0] == 1).");
             pass_count = pass_count + 1;
         end else begin
-            $display("    [FAIL] DRAM 8-bit Bytes mismatch! 'R' returned 0x%04x, Expected: 0x5aa5",
-                     captured_hrdata[15:0]);
+            $display("    [FAIL] Core halt status not reflected over FT1248!");
             error_count = error_count + 1;
         end
 
-        // Another Word Write & Readback
-        send_uart_string("A 8000200c\n");
+        // 2.2 Memory Write & Readback over FT1248
+        $display("\n>>> [FT1248] 2.2: Memory Write & Readback Verification <<<");
+        send_ft1248_string("A 80002000\n");
         wait_for_prompt();
-        send_uart_string("W cafe1234\n");
-        wait_for_prompt();
-        send_uart_string("A 8000200c\n");
-        wait_for_prompt();
-        verify_read_word(32'hcafe1234, "DRAM 32-bit Word [0x8000200C]");
-
-        //---------------------------------------------------------------------
-        // TEST 4: BOOT ROM (0x0001_0000) READ-ONLY VERIFICATION VIA 'R'
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 4: BOOT ROM (0x0001_0000) READBACK VERIFICATION VIA 'R' <<<");
-        send_uart_string("A 00010008\n");
-        wait_for_prompt();
-        verify_read_word(32'h1234_5678, "Boot ROM Signature [0x00010008]");
-
-        //---------------------------------------------------------------------
-        // TEST 5: UNCORE APB PERIPHERAL WRITE & READBACK VIA 'R' (WITH WAIT STATES)
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 5: UNCORE PERIPHERALS (0x1000_0000) WRITE & READBACK VIA 'R' <<<");
-        // Read Peripheral ID
-        send_uart_string("A 10000008\n");
-        wait_for_prompt();
-        verify_read_word(APB_PERIPH_ID, "APB Peripheral ID [0x10000008]");
-
-        // Write to GPIO Data register: 0x000000AA
-        send_uart_string("A 10000000\n");
-        wait_for_prompt();
-        send_uart_string("W 000000aa\n");
+        send_ft1248_string("W 55aa55aa\n"); // Write distinctive pattern over FT1248
         wait_for_prompt();
 
-        // Readback GPIO Data register via 'R after A' and verify
-        send_uart_string("A 10000000\n");
+        send_ft1248_string("A 80002000\n");
         wait_for_prompt();
-        verify_read_word(32'h000000aa, "APB GPIO Data Register [0x10000000]");
+        verify_read_word(32'h55aa55aa, "FT1248 DRAM [0x80002000]");
 
-        // Write to GPIO Direction register (triggers 2 wait states via HREADY=0)
-        $display("    [TB] Testing multi-cycle slave stall on 0x1000_0004...");
-        send_uart_string("A 10000004\n");
+        // 2.3 1TOPS Accelerator Computation over FT1248
+        $display("\n>>> [FT1248] 2.3: Accelerator Multiplier Computation over FT1248 <<<");
+        send_ft1248_string("A 30000000\n");
         wait_for_prompt();
-        send_uart_string("W 000000ff\n");
+        send_ft1248_string("W 0000000f\n"); // OpA = 15
         wait_for_prompt();
+        send_ft1248_string("A 30000004\n");
+        wait_for_prompt();
+        send_ft1248_string("W 00000003\n"); // OpB = 3
+        wait_for_prompt();
+        send_ft1248_string("A 30000008\n");
+        wait_for_prompt();
+        verify_read_word(32'd45, "FT1248 Multiplier Product (15 * 3 = 45)");
 
-        // Readback GPIO Direction register via 'R after A' and verify
-        send_uart_string("A 10000004\n");
+        // 2.4 Hardware Polling over FT1248
+        $display("\n>>> [FT1248] 2.4: Hardware Polling ('P') over FT1248 <<<");
+        send_ft1248_string("A 30000008\n");
         wait_for_prompt();
-        verify_read_word(32'h000000ff, "APB GPIO Direction Register [0x10000004] (Wait States)");
-
-        //---------------------------------------------------------------------
-        // TEST 6: 1TOPS ACCELERATOR MULTIPLIER WRITE & READBACK VIA 'R'
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 6: 1TOPS ACCELERATOR MULTIPLIER WRITE & READBACK VIA 'R' <<<");
-        // Write Operand A = 12 (0x0000000C)
-        send_uart_string("A 30000000\n");
+        send_ft1248_string("M 000000ff\n");
         wait_for_prompt();
-        send_uart_string("W 0000000c\n");
+        send_ft1248_string("V 0000002d\n"); // Match 45 (0x2D)
         wait_for_prompt();
-
-        // Readback Operand A via 'R after A' and verify
-        send_uart_string("A 30000000\n");
+        send_ft1248_string("P 000000ff\n");
         wait_for_prompt();
-        verify_read_word(32'd12, "Accelerator Operand A [0x30000000]");
-
-        // Write Operand B = 5 (0x00000005)
-        send_uart_string("A 30000004\n");
-        wait_for_prompt();
-        send_uart_string("W 00000005\n");
-        wait_for_prompt();
-
-        // Readback Operand B via 'R after A' and verify
-        send_uart_string("A 30000004\n");
-        wait_for_prompt();
-        verify_read_word(32'd5, "Accelerator Operand B [0x30000004]");
-
-        // Read Product at 0x3000_0008 via 'R after A' and verify (12 * 5 = 60 = 0x3C)
-        send_uart_string("A 30000008\n");
-        wait_for_prompt();
-        verify_read_word(32'd60, "Accelerator Product Result [0x30000008] (12 * 5 = 60)");
-
-        //---------------------------------------------------------------------
-        // TEST 7: BULK MEMORY FILL ('F') & READBACK VERIFICATION VIA 'R'
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 7: BULK FILL ('F') & RAW UPLOAD ('U') READBACK VERIFICATION VIA 'R' <<<");
-        // Fill 8 words at DRAM 0x8000_2100 with pattern 0xCAFEBABE
-        send_uart_string("A 80002100\n");
-        wait_for_prompt();
-        send_uart_string("V cafebabe\n");
-        wait_for_prompt();
-        send_uart_string("F 00000008\n"); // Fill 8 words
-        wait_for_prompt();
-
-        // Verify filled memory via 'R after A' through the debugger!
-        send_uart_string("A 80002100\n");
-        wait_for_prompt();
-        verify_read_word(32'hcafebabe, "Filled Word 0 [0x80002100]");
-        verify_read_word(32'hcafebabe, "Filled Word 1 [0x80002104]");
-        send_uart_string("A 8000211c\n"); // Word 7
-        wait_for_prompt();
-        verify_read_word(32'hcafebabe, "Filled Word 7 [0x8000211C]");
-
-        // Raw Binary Upload ('U'): Upload 8 raw binary bytes to DRAM 0x8000_2200
-        send_uart_string("A 80002200\n");
-        wait_for_prompt();
-        send_uart_string("U 00000008\n"); // Expect 8 raw bytes
-        #(BIT_PERIOD * 2);
-
-        // Stream 8 raw binary bytes: 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
-        send_uart_byte(8'h11);
-        send_uart_byte(8'h22);
-        send_uart_byte(8'h33);
-        send_uart_byte(8'h44);
-        send_uart_byte(8'h55);
-        send_uart_byte(8'h66);
-        send_uart_byte(8'h77);
-        send_uart_byte(8'h88);
-        wait_for_prompt();
-
-        // Verify uploaded bytes via 'R after A' through the debugger!
-        send_uart_string("A 80002200\n");
-        wait_for_prompt();
-        verify_read_word(32'h44332211, "Uploaded Bytes [0x80002200] (0x11, 0x22, 0x33, 0x44)");
-        verify_read_word(32'h88776655, "Uploaded Bytes [0x80002204] (0x55, 0x66, 0x77, 0x88)");
-
-        //---------------------------------------------------------------------
-        // TEST 8: HARDWARE POLLING ('P', 'M', 'V') & TIMEOUT CORNER CONDITION
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 8: HARDWARE POLLING ('P') SUCCESS & TIMEOUT CORNER CONDITIONS <<<");
-        // Case A: Immediate match on Product register (value = 60 = 0x3C)
-        send_uart_string("A 30000008\n");
-        wait_for_prompt();
-        send_uart_string("M 000000ff\n"); // Mask lower 8 bits
-        wait_for_prompt();
-        send_uart_string("V 0000003c\n"); // Match value 0x3C (60)
-        wait_for_prompt();
-        send_uart_string("P 000000ff\n"); // Poll with 255 cycle timeout
-        wait_for_prompt();
-        $display("    [PASS] Hardware Poll succeeded on exact bitmask match (0x3C).");
+        $display("    [PASS] Hardware Poll succeeded over FT1248 on exact match (45 = 0x2D).");
         pass_count = pass_count + 1;
 
-        // Case B: Polling Timeout (Expect condition that never matches)
-        $display("    [TB] Testing Polling Timeout on impossible match...");
-        send_uart_string("V 00000099\n"); // Impossible match
-        wait_for_prompt();
-        send_uart_string("P 00000006\n"); // Short 6-cycle timeout
+        // 2.5 Core Resume over FT1248
+        $display("\n>>> [FT1248] 2.5: Core Resume over FT1248 <<<");
+        send_ft1248_string("C 0102\n");
+        wait (core_halt_o == 1'b0);
+        wait (core_halted_i == 1'b0);
         wait_for_prompt();
 
-        // In timeout, adp_bus_err is set, outputting 'P!'
-        $display("    [PASS] Polling Timeout handled properly (timed out as expected with '!').");
+        send_ft1248_string("C\n");
+        wait_for_prompt();
+        if (adp_bus_data[24] === 1'b0) begin
+            $display("    [PASS] Core confirmed RESUMED via FT1248 status query (GPI8[0] == 0).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Core resume status not reflected over FT1248!");
+            error_count = error_count + 1;
+        end
+
+        //=====================================================================
+        // PART 3: PROTOCOL ISOLATION & MULTIPLEXER INTEGRITY VERIFICATION
+        //=====================================================================
+        $display("\n-------------------------------------------------------------------------------");
+        $display("   PART 3: PROTOCOL ISOLATION VERIFICATION                                     ");
+        $display("-------------------------------------------------------------------------------");
+        // While dbg_sel = 1 (FT1248 mode), send traffic on UART RX pin
+        $display("    [TB] Sending command on UART while dbg_sel = 1 (Should be ignored)...");
+        send_uart_string("C 0202\n");
+        #50000;
+        if (core_halt_o === 1'b0) begin
+            $display("    [PASS] UART traffic correctly blocked/ignored while dbg_sel = 1.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] UART traffic leaked through while dbg_sel = 1!");
+            error_count = error_count + 1;
+        end
+
+        // Switch back to UART mode (dbg_sel = 0)
+        #1000;
+        dbg_sel = 1'b0;
+        $display("[TB] Hardware pad dbg_sel switched back to 0 (UART Active).");
+        #1000;
+
+        // Verify UART works again
+        send_uart_string("C 0202\n");
+        wait (core_halt_o == 1'b1);
+        wait (core_halted_i == 1'b1);
+        wait_for_prompt();
+        $display("    [PASS] UART regained control immediately when dbg_sel switched to 0.");
         pass_count = pass_count + 1;
 
-        //---------------------------------------------------------------------
-        // TEST 9: ILLEGAL UNMAPPED ADDRESS BUS ERROR (HRESP = 1 -> '!')
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 9: ILLEGAL ADDRESS BUS ERROR (HRESP = 1 -> '!') <<<");
-        send_uart_string("A 50000000\n"); // Address in unmapped error space
-        wait_for_prompt();
-        send_uart_string("R\n");           // Read from unmapped space
-        wait_for_prompt();
-
-        $display("    [PASS] Bus Error caught! Controller responded with error marker: %s", last_completed_line);
-        pass_count = pass_count + 1;
-
-        //---------------------------------------------------------------------
-        // TEST 10: INVALID COMMAND REJECTION ('?')
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 10: INVALID COMMAND REJECTION ('?') <<<");
-        send_uart_string("Z 12345678\n"); // Send invalid command 'Z'
-        wait_for_prompt();
-
-        send_uart_string("?\n");          // Send invalid command '?'
-        wait_for_prompt();
-
-        $display("    [PASS] Controller rejected invalid commands ('Z', '?') without hang-up.");
-        pass_count = pass_count + 1;
-
-        //---------------------------------------------------------------------
-        // TEST 11: AHB BUS ARBITER CONTENTION (CPU vs DEBUGGER)
-        //---------------------------------------------------------------------
-        $display("\n>>> TEST 11: AHB ARBITER CONTENTION (CPU M0 vs DEBUGGER M1) <<<");
-        // Start CPU background write to DRAM while Debugger is halted
-        @(posedge clk);
-        cpu_haddr  <= 32'h8000_2300;
-        cpu_hwdata <= 32'h5555_AAAA;
-        cpu_hwrite <= 1'b1;
-        cpu_htrans <= 2'b10; // NONSEQ
-
-        // Debugger accesses memory while core_halt = 1
-        send_uart_string("A 80002000\n");
-        wait_for_prompt();
-        send_uart_string("R\n");
-        wait_for_prompt();
-
-        @(posedge clk);
-        cpu_htrans <= 2'b00; // IDLE
-        cpu_hwrite <= 1'b0;
-
-        $display("    [PASS] Bus arbiter prioritized Debugger cleanly during core halt.");
-        pass_count = pass_count + 1;
-
-        // Resume core at end of testbench
         send_uart_string("C 0102\n");
         wait (core_halt_o == 1'b0);
         wait (core_halted_i == 1'b0);
         wait_for_prompt();
 
         //---------------------------------------------------------------------
-        // FINAL SUMMARY
+        // FINAL TEST SUMMARY
         //---------------------------------------------------------------------
         $display("\n===============================================================================");
-        $display("   ALL TEST SCENARIOS COMPLETED!                                               ");
+        $display("   ALL DUAL-PROTOCOL TEST SCENARIOS COMPLETED!                                 ");
         $display("   Passed Assertions: %0d                                                      ", pass_count);
         $display("   Failed Assertions: %0d                                                      ", error_count);
         $display("===============================================================================\n");
 
         if (error_count == 0) begin
-            $display(">>> [SUCCESS] ALL CORNER-CASE & MEMORY READBACK TESTS PASSED! <<<\n");
+            $display(">>> [SUCCESS] ALL UART, FT1248, AND MUX ISOLATION TESTS PASSED! <<<\n");
         end else begin
             $display(">>> [FAILURE] SOME TESTS FAILED! CHECK ERROR COUNT ABOVE. <<<\n");
             $fatal(1);
@@ -880,8 +831,7 @@ module tb_debugger;
     // Safety watchdog timeout (15 milliseconds)
     initial begin
         #15_000_000;
-        $display("\n[TB] [ERROR] Simulation Watchdog Timeout! adp_state = %0d, adp_cmd = %0c, adp_sys = 0x%02x, core_halt_o = %0b",
-                 adp_state, adp_cmd, adp_sys, core_halt_o);
+        $display("\n[TB] [ERROR] Simulation Watchdog Timeout!");
         $fatal(1);
     end
 

@@ -6,17 +6,29 @@ All commands are case-insensitive (e.g., `a` or `A`, `r` or `R`) and must be ter
 
 ---
 
+## 0. Physical Protocol Interface Selection (`dbg_sel` Pin)
+
+The debugger subsystem features a physical hardware input pad, **`dbg_sel`**, that controls a 2-to-1 stream multiplexer selecting between dedicated external interfaces:
+
+| `dbg_sel` Pad Level | Active Physical Interface | Physical Pins Used | Transfer Characteristics |
+| :---: | :--- | :--- | :--- |
+| **`0` (LOW)** | **Dedicated Debug UART** | `uart_rx`, `uart_tx` | Asynchronous 8-N-1 (Default 115200 Baud). Simple standard serial terminal or USB-to-UART dongle. |
+| **`1` (HIGH)** | **Dedicated FT1248 Interface** | `ft1248_clk`, `ft1248_ss_n`, `ft1248_miso`, `ft1248_miosio` | Synchronous serial/nibble/byte bus with FTDI FT232H / FT2232H. High-speed transfers up to 30 MHz. |
+
+> [!IMPORTANT]
+> The ADP command grammar, syntax, responses, and state machines are **100% identical** across both UART and FT1248 modes. When `dbg_sel = 1`, the UART interface is electrically isolated and prevented from injecting commands; conversely, when `dbg_sel = 0`, the FT1248 interface is isolated.
+
 ## 1. Core Execution & System Control Commands
 
 | Command | Syntax | Description | Example & Response |
 | :--- | :--- | :--- | :--- |
-| **Halt Core** | `C 0202` | Asserts bit 1 of GPO8 (`core_halt_o = 1` $\rightarrow$ `ExternalStall = 1`). Stalls all 5 pipeline stages. | `] C 0202`<br>`C 0x00020202` |
-| **Resume Core** | `C 0102` | Clears bit 1 of GPO8 (`core_halt_o = 0` $\rightarrow$ `ExternalStall = 0`). Resumes pipeline execution. | `] C 0102`<br>`C 0x00000200` |
+| **Halt Core** | `C 0202` | Asserts bit 1 of GPO8 (`core_halt_o = 1` -> `ExternalStall = 1`). Stalls all 5 pipeline stages. | `] C 0202`<br>`C 0x00020202` |
+| **Resume Core** | `C 0102` | Clears bit 1 of GPO8 (`core_halt_o = 0` -> `ExternalStall = 0`). Resumes pipeline execution. | `] C 0102`<br>`C 0x00000200` |
 | **Assert Reset** | `C 0201` | Sets bit 0 of GPO8 (`core_reset_o = 1`). Holds CPU in reset. | `] C 0201`<br>`C 0x00010201` |
 | **Release Reset** | `C 0101` | Clears bit 0 of GPO8 (`core_reset_o = 0`). Releases CPU reset. | `] C 0101`<br>`C 0x00000200` |
 | **Overwrite GPO8** | `C 03<val8>` | Overwrites entire 8-bit GPO8 with `<val8>`. | `] C 0300`<br>`C 0x00000200` |
 | **Query Status** | `C` | Reads current GPO8 outputs and GPI8 inputs without modifying them. | `] C`<br>`C 0x01000000` |
-| **Enter ADP Mode** | `<ESC>` (`\x1b`) | Wakes up ADP command mode from idle/passthrough. | Press `ESC` key $\rightarrow$ displays `]` |
+| **Enter ADP Mode** | `<ESC>` (`\x1b`) | Wakes up ADP command mode from idle/passthrough. | Press `ESC` key -> displays `]` |
 | **Exit ADP Mode** | `X` | Exits ADP monitor mode and switches serial channel to terminal/STDIO bypass. | `] X` |
 
 ---
