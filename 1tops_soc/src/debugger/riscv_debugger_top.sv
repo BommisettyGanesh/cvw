@@ -11,11 +11,11 @@
 `timescale 1ns / 1ps
 
 module riscv_debugger_top #(
-    parameter CLK_FREQ    = 50_000_000,
+    parameter CLK_FREQ    = 100_000_000, // Basys 3 100 MHz oscillator
     parameter BAUD_RATE   = 115200,
     parameter PROMPT_CHAR = "]",
     parameter FT_WIDTH    = 1,
-    parameter FT_CLKDIV   = 8'd2
+    parameter FT_CLKDIV   = 8'd4          // 100 MHz / (2 * (4 + 1)) = 10 MHz FT1248 clock
 )(
     input  wire                 clk,
     input  wire                 rst_n,

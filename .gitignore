@@ -208,3 +208,15 @@ vivado*.str
 *.hw/
 *.ip_user_files/
 *.wdf
+
+# Vivado Workspaces, Projects, Bitstreams, and Artifacts
+vivado_workspace/
+vivado_proj*/
+rv32_core_schematic/
+*.xpr
+*.sim/
+*.bit
+*.bin
+*.dcp
+*.sysdef
+*.bak

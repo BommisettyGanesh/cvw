@@ -6,7 +6,7 @@
 `timescale 1ns / 1ps
 
 module socdebug_uart #(
-    parameter CLK_FREQ   = 50_000_000,
+    parameter CLK_FREQ   = 100_000_000, // Basys 3 100 MHz oscillator
     parameter BAUD_RATE  = 115200
 )(
     input  wire       clk,
