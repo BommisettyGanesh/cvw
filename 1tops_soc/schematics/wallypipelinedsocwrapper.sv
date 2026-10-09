@@ -11,7 +11,13 @@ import cvw::*;
 
 `include "parameter-defs.vh"
 
-module wallypipelinedsocwrapper (
+module wallypipelinedsocwrapper #(
+  parameter CLK_FREQ    = 100_000_000,
+  parameter BAUD_RATE   = 115200,
+  parameter PROMPT_CHAR = "]",
+  parameter FT_WIDTH    = 1,
+  parameter FT_CLKDIV   = 8'd4
+) (
   input  logic                clk,
   input  logic                reset_ext,        // external asynchronous reset pin
   output logic                reset,            // reset synchronized to clk
@@ -43,10 +49,27 @@ module wallypipelinedsocwrapper (
   input  logic                SDCIn,            // SDC DATA[0]
   output logic                SDCCmd,           // SDC CMD
   output logic [3:0]          SDCCS,            // SDC Card Detect
-  output logic                SDCCLK            // SDC Clock
+  output logic                SDCCLK,           // SDC Clock
+
+  // Dual-Protocol Debugger Hardware Pins
+  input  logic                dbg_sel         = 1'b0,
+  input  logic                uart_rx         = 1'b1,
+  output logic                uart_tx,
+  output logic                ft1248_clk,
+  output logic                ft1248_ss_n,
+  input  logic                ft1248_miso     = 1'b1,
+  inout  wire [FT_WIDTH-1:0]  ft1248_miosio,
+  output logic                core_halted_led
 );
 
   // Instantiates top SoC module dynamically with parameters P derived from config.vh
-  wallypipelinedsoc #(P) soc (.*);
+  wallypipelinedsoc #(
+    .P           (P),
+    .CLK_FREQ    (CLK_FREQ),
+    .BAUD_RATE   (BAUD_RATE),
+    .PROMPT_CHAR (PROMPT_CHAR),
+    .FT_WIDTH    (FT_WIDTH),
+    .FT_CLKDIV   (FT_CLKDIV)
+  ) soc (.*);
 
 endmodule
