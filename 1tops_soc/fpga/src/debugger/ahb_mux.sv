@@ -132,12 +132,8 @@ module ahb_mux #(
     assign M1_HRESP    = (grant_data == 1'b1) ? S_HRESP : 1'b0;
 
     // HREADY gating:
-    // Granted master receives slave HREADY.
-    // Waiting master trying to transfer is held with HREADY=0 until granted.
-    assign M0_HREADY   = (grant_addr == 1'b0 && grant_data == 1'b0) ? S_HREADY :
-                         (m0_req ? 1'b0 : 1'b1);
-
-    assign M1_HREADY   = (grant_addr == 1'b1 && grant_data == 1'b1) ? S_HREADY :
-                         (m1_req ? 1'b0 : 1'b1);
+    // Driven by registered grant phase to break combinational timing loops
+    assign M0_HREADY   = (grant_addr == 1'b0 || grant_data == 1'b0) ? S_HREADY : 1'b0;
+    assign M1_HREADY   = (grant_addr == 1'b1 || grant_data == 1'b1) ? S_HREADY : 1'b0;
 
 endmodule

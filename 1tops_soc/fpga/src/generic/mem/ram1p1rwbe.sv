@@ -93,6 +93,7 @@ module ram1p1rwbe import cvw::*; #(parameter USE_SRAM=0, DEPTH=64, WIDTH=44, PRE
       import "DPI-C" function string getenvval(input string env_name);
     `endif
 
+    `ifndef SYNTHESIS
     initial begin
       if (PRELOAD_ENABLED) begin
         if (WIDTH == 64 || WIDTH == 32) begin
@@ -102,6 +103,7 @@ module ram1p1rwbe import cvw::*; #(parameter USE_SRAM=0, DEPTH=64, WIDTH=44, PRE
         end
       end
     end
+    `endif
 
     // FPGA-Tuned True Synchronous Block RAM Read and Byte-Write Enables
     // Synthesizes cleanly into Xilinx Artix-7 RAMB36E1 / RAMB18E1 primitives

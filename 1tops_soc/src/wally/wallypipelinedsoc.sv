@@ -124,6 +124,20 @@ module wallypipelinedsoc import cvw::*; #(
   logic                       dbg_core_halt;
   logic                       dbg_core_reset;
 
+  // Zero-extend debugger address/data to match physical bus width (P.PA_BITS & P.AHBW)
+  logic [P.PA_BITS-1:0]       dbg_HADDR_ext;
+  logic [P.AHBW-1:0]          dbg_HWDATA_ext;
+
+  if (P.PA_BITS >= 32)
+    assign dbg_HADDR_ext = { {(P.PA_BITS-32){1'b0}}, dbg_HADDR };
+  else
+    assign dbg_HADDR_ext = dbg_HADDR[P.PA_BITS-1:0];
+
+  if (P.AHBW >= 32)
+    assign dbg_HWDATA_ext = { {(P.AHBW-32){1'b0}}, dbg_HWDATA };
+  else
+    assign dbg_HWDATA_ext = dbg_HWDATA[P.AHBW-1:0];
+
   // 1. Dual-Protocol Hardware Debugger Subsystem (UART + FT1248)
   riscv_debugger_top #(
     .CLK_FREQ    (CLK_FREQ),
@@ -206,8 +220,8 @@ module wallypipelinedsoc import cvw::*; #(
     .M0_HRESP     (core_HRESP),
 
     // Master 1: Debugger Subsystem
-    .M1_HADDR     (dbg_HADDR[P.PA_BITS-1:0]),
-    .M1_HWDATA    (dbg_HWDATA[P.AHBW-1:0]),
+    .M1_HADDR     (dbg_HADDR_ext),
+    .M1_HWDATA    (dbg_HWDATA_ext),
     .M1_HWRITE    (dbg_HWRITE),
     .M1_HTRANS    (dbg_HTRANS),
     .M1_HSIZE     (dbg_HSIZE),

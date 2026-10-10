@@ -67,3 +67,20 @@ set_property IOSTANDARD LVCMOS33 [get_ports led_core_halted]
 
 set_property PACKAGE_PIN E19 [get_ports led_dbg_sel]
 set_property IOSTANDARD LVCMOS33 [get_ports led_dbg_sel]
+
+## 8. Asynchronous I/O False Paths (Buttons, Switches, LEDs, Serial Lines, FT1248 PMOD)
+set_false_path -from [get_ports reset_btn]
+set_false_path -from [get_ports dbg_sel]
+set_false_path -from [get_ports uart_rx]
+set_false_path -from [get_ports UARTSin]
+set_false_path -from [get_ports ft1248_miso]
+set_false_path -from [get_ports ft1248_miosio*]
+set_false_path -to   [get_ports led_*]
+set_false_path -to   [get_ports uart_tx]
+set_false_path -to   [get_ports UARTSout]
+set_false_path -to   [get_ports ft1248_*]
+
+## 9. Bitstream Generation Configuration (SPI Quad-Mode for Fast Basys 3 Boot)
+set_property BITSTREAM.CONFIG.SPI_BUSWIDTH 4 [current_design]
+set_property CONFIG_MODE SPIx4 [current_design]
+

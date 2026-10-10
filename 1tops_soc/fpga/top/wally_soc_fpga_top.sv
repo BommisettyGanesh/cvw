@@ -10,11 +10,11 @@ import cvw::*;
 `include "parameter-defs.vh"
 
 module wally_soc_fpga_top #(
-  parameter CLK_FREQ    = 100_000_000, // Basys 3 100 MHz onboard oscillator
-  parameter BAUD_RATE   = 115200,      // Debugger UART baud rate
-  parameter PROMPT_CHAR = "]",         // ADP CLI prompt
-  parameter FT_WIDTH    = 1,           // FT1248 bus width (1-bit on Basys 3 PMOD JB)
-  parameter FT_CLKDIV   = 8'd4          // 100 MHz / (2 * (4 + 1)) = 10 MHz FT1248 clock
+  parameter CLK_FREQ    = 50_000_000, // 50 MHz SoC clock from on-chip MMCM
+  parameter BAUD_RATE   = 115200,     // Debugger UART baud rate
+  parameter PROMPT_CHAR = "]",        // ADP CLI prompt
+  parameter FT_WIDTH    = 1,          // FT1248 bus width (1-bit on Basys 3 PMOD JB)
+  parameter FT_CLKDIV   = 8'd1        // SCLK = 50 MHz / (2 * (1 + 1)) = 12.5 MHz FT1248 clock
 ) (
   // 1. Clock and Reset (Basys 3 Onboard)
   input  logic                clk,              // 100 MHz on-board oscillator (Pin W5)
@@ -38,8 +38,59 @@ module wally_soc_fpga_top #(
   output logic                led_dbg_sel       // LED 1 (Pin E19: Reflects SW0 dbg_sel state)
 );
 
-  // Active-low external reset conversion for SoC
-  wire reset_ext = ~reset_btn;
+  // -------------------------------------------------------------------------
+  // On-Chip Clock Generation: 100 MHz (Pin W5) -> 50 MHz SoC Core Clock
+  // -------------------------------------------------------------------------
+  wire clk_soc;
+  wire mmcm_locked;
+
+`ifdef SYNTHESIS
+  wire clk_soc_unbuf;
+  wire clk_fb;
+
+  MMCME2_BASE #(
+    .BANDWIDTH          ("OPTIMIZED"),
+    .CLKFBOUT_MULT_F    (10.0),       // VCO = 100 MHz * 10.0 = 1000 MHz (Valid: 600-1200 MHz)
+    .CLKFBOUT_PHASE     (0.0),
+    .CLKIN1_PERIOD      (10.0),       // 100 MHz input
+    .CLKOUT0_DIVIDE_F   (20.0),       // Output = 1000 MHz / 20.0 = 50.0 MHz
+    .CLKOUT0_DUTY_CYCLE (0.5),
+    .CLKOUT0_PHASE      (0.0),
+    .DIVCLK_DIVIDE      (1),
+    .REF_JITTER1        (0.010),
+    .STARTUP_WAIT       ("FALSE")
+  ) u_mmcm (
+    .CLKOUT0            (clk_soc_unbuf),
+    .CLKOUT0B           (),
+    .CLKOUT1            (),
+    .CLKOUT1B           (),
+    .CLKOUT2            (),
+    .CLKOUT2B           (),
+    .CLKOUT3            (),
+    .CLKOUT3B           (),
+    .CLKOUT4            (),
+    .CLKOUT5            (),
+    .CLKOUT6            (),
+    .CLKFBOUT           (clk_fb),
+    .CLKFBOUTB          (),
+    .LOCKED             (mmcm_locked),
+    .CLKIN1             (clk),
+    .PWRDWN             (1'b0),
+    .RST                (reset_btn),
+    .CLKFBIN            (clk_fb)
+  );
+
+  BUFG u_bufg_soc (
+    .I (clk_soc_unbuf),
+    .O (clk_soc)
+  );
+`else
+  assign clk_soc     = clk;
+  assign mmcm_locked = 1'b1;
+`endif
+
+  // Active-low external reset conversion for SoC (held in reset until MMCM is locked)
+  wire reset_ext = (~reset_btn) & mmcm_locked;
 
   // Visual status LED for protocol switch
   assign led_dbg_sel = dbg_sel;
@@ -77,7 +128,7 @@ module wally_soc_fpga_top #(
     .FT_WIDTH    (FT_WIDTH),
     .FT_CLKDIV   (FT_CLKDIV)
   ) soc (
-    .clk              (clk),
+    .clk              (clk_soc),
     .reset_ext        (reset_ext),
     .reset            (reset),
     .ExternalStall    (ExternalStall),
