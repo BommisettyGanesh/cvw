@@ -56,6 +56,7 @@ This directory contains the standalone, FPGA-tuned implementation of the **CORE-
 | `UARTSout` | **Pin A18** | Output | Uncore Application UART TX (via onboard micro-USB cable) |
 | `led_core_halted` | **Pin U16 (LED 0)** | Output | Status LED (lit when CPU core is halted by debugger) |
 | `led_dbg_sel` | **Pin E19 (LED 1)** | Output | Status LED (lit when FT1248 mode is selected) |
+| `led_rx_detect` | **Pin L1 (LED 15)** | Output | UART RX Activity / Prompt `]` Detector (Blinks ~200ms on any byte, latches ON upon detecting `]`) |
 
 ---
 

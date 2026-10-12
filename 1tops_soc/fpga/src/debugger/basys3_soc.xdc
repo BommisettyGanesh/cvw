@@ -67,3 +67,6 @@ set_property IOSTANDARD LVCMOS33 [get_ports led_core_halted]
 
 set_property PACKAGE_PIN E19 [get_ports led_dbg_sel]
 set_property IOSTANDARD LVCMOS33 [get_ports led_dbg_sel]
+
+set_property PACKAGE_PIN L1 [get_ports led_rx_detect]
+set_property IOSTANDARD LVCMOS33 [get_ports led_rx_detect]

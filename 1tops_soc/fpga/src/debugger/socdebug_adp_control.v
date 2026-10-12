@@ -133,6 +133,8 @@ endfunction
 function FNexit; // EOF
 input [7:0] char8;
   FNexit = ((char8[7:0] == 8'h04) || (char8[7:0] == 8'h00));
+  // Optional: uncomment below (and comment line above) to ignore null bytes (0x00) and exit only on Ctrl+D (0x04):
+  // FNexit = (char8[7:0] == 8'h04);
 endfunction
 
 function FNvalid_EOL; // CR or LF
@@ -731,6 +733,8 @@ begin
        ADP_LINEACK2: // CR
          if (com_tx_done) begin
            if (banner) begin banner <= 1'b0; adp_state <= STD_IOCHK; end
+           // Optional: uncomment below (and comment line above) to auto-enter ADP prompt ']' on boot without needing 0x1B (ESC):
+           // if (banner) begin banner <= 1'b0; ADP_txchar_next(PROMPT_CHAR); adp_state <= ADP_PROMPT; end
 `ifndef ADPBASIC
            else if ((FNvalid_cmd(adp_cmd) == CMD_R) && (adp_count != 32'h00000000)) //// non-zero count
              begin ADP_BUSREADINC_next; adp_count_dec <= 1'b1; adp_state <= ADP_READ; end //
