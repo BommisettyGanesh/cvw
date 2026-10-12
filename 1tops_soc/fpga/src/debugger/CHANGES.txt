@@ -263,4 +263,72 @@ d) Software & Documentation Updates:
    - Updated sw/dbg_cli.py with '--protocol {uart, ft1248}', baud/FTDI URL options,
      automatic readback verification, and mock testing.
    - Updated DEBUGGER_WIRING_GUIDE.md and COMMANDS.md with dual-protocol schematics.
+
+--------------------------------------------------------------------------------
+9. FPGA BOARD TESTING, SYNCHRONOUS UART RX MONITOR & SUBWORD HWSTRB FIX
+--------------------------------------------------------------------------------
+Update Date: 2026-10-12
+
+a) Synchronous UART RX Monitor & Activity LED (wally_soc_fpga_top.sv):
+   - Problem: Asynchronous toggle logic 'always @(uart_rx) led_rx_detect = led_rx_detect ^ uart_rx;'
+     created combinational loop violations in Vivado implementation.
+   - Solution: Designed a clean, fully-synchronous UART RX monitor running on
+     the 50 MHz SoC clock ('clk_soc'):
+     * 2-stage synchronizer to prevent metastability.
+     * Baud rate generator (115200 baud, 434 clock cycles per bit).
+     * 8-bit shift register and start/stop bit validation FSM.
+     * ASCII ']' (0x5D) detection logic that asserts and latches a sticky bit,
+       keeping LED 15 (Pin L1) solidly ON to indicate ADP command prompt state.
+     * Monostable pulse stretcher (~200 ms) to flash LED 15 on any valid byte.
+
+b) Top-Level System Reset Polarity Correction (wally_soc_fpga_top.sv):
+   - Problem: 'reset_ext' was set as '(~reset_btn) & mmcm_locked;'. In CORE-V
+     Wally, 'reset_ext' is routed directly through a non-inverting two-stage
+     synchronizer into active-high 'reset'. This held the entire SoC, uncore,
+     and debugger in permanent reset whenever 'reset_btn' was unpressed.
+   - Solution: Inverted logic to 'reset_ext = reset_btn | (~mmcm_locked);' matching
+     the active-high Basys 3 center button 'btnC' (U18).
+
+c) Subword HWSTRB Byte Strobe Decoding Fix (wallypipelinedsoc.sv):
+   - Problem: In 'wallypipelinedsoc.sv', whenever 'dbg_core_halt = 1', the bus
+     write strobes were hardcoded to 'HWSTRB = 4'b1111'. When streaming binary
+     code via 'U <count>', single-byte writes corrupted adjacent bytes within
+     the 32-bit word.
+   - Solution: Replaced hardcoded strobes with dynamic decoding 'dbg_HWSTRB'
+     derived from 'HSIZE[1:0]' and 'HADDR[1:0]':
+     * Byte writes (HSIZE=0): selectively assert only lane 0, 1, 2, or 3.
+     * Halfword writes (HSIZE=1): assert lanes 1:0 or 3:2.
+     * Word writes (HSIZE=2): assert all lanes 3:0.
+   - Enables binary file uploads ('U') and byte-level memory modifications.
+
+d) ADP Controller Reversion to Original Standard IO Check Mode:
+   - Preserved original protocol requirement in 'socdebug_adp_control.v':
+     * Board outputs banner ' 0x50c1ab04\r\n' and enters 'STD_IOCHK'.
+     * User enters ADP command mode by sending '<ESC>' (0x1B in HEX).
+     * User exits back to terminal passthrough with 'X'.
+   - Added reference comments and line tags (lines 137 & 737) to facilitate
+     enabling auto-prompting on boot without '<ESC>' if desired in the future.
+
+e) Bare-Metal RV32I Factorial Demo Program (software/factorial.S):
+   - Pure RV32I bare-metal assembly implementation computing n! without relying
+     on hardware multiplier (M extension) or C runtime libraries.
+   - Reads input 'n' from Data RAM 0x80002000, writes result to 0x80002004.
+   - 76 bytes total (0x4C bytes), compiled via riscv64-unknown-elf-gcc.
+   - Fully verified end-to-end via ADP 'F' (fill), 'U' (upload), 'C' (halt/reset/resume),
+     and 'R' (result readback).
+
+f) AHB Mux Arbiter Resume Deadlock Fix (ahb_mux.sv):
+   - Problem: In 'ahb_mux.sv', when 'core_halt' was deasserted, the grant logic
+     checked 'if (m0_req) next_grant_addr = 0; else if (m1_req) next_grant_addr = 1; else next_grant_addr = grant_addr;'.
+     Because 'grant_addr' was 1 (from previous debugger operations), Master 0
+     saw 'M0_HREADY = 0'. Under the CORE-V Wally 'busfsm', instruction fetch
+     transactions ('m0_req') are gated by 'HREADY == 1'. Thus, the CPU core
+     could not assert 'm0_req', while the arbiter refused to grant the bus to
+     Master 0 without 'm0_req', causing a permanent bus deadlock upon resume.
+   - Solution: In 'ahb_mux.sv', whenever Debugger is idle ('m1_req == 0'),
+     'next_grant_addr' now defaults unconditionally to '1'b0' (Master 0).
+     This guarantees that Master 0 receives 'HREADY = 1' immediately upon core
+     resume, allowing the CPU to start instruction fetching without delay.
 ================================================================================
+
+

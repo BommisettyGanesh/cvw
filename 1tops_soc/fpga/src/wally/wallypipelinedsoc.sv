@@ -246,7 +246,16 @@ module wallypipelinedsoc import cvw::*; #(
     .S_HRESP      (HRESP)
   );
 
-  assign HWSTRB = (dbg_core_halt) ? { (P.XLEN/8){1'b1} } : core_HWSTRB;
+  logic [P.XLEN/8-1:0] dbg_HWSTRB;
+  always_comb begin
+    case (HSIZE[1:0])
+      2'b00:   dbg_HWSTRB = { {(P.XLEN/8-1){1'b0}}, 1'b1 } << HADDR[$clog2(P.XLEN/8)-1:0];
+      2'b01:   dbg_HWSTRB = { {(P.XLEN/8-2){1'b0}}, 2'b11 } << {HADDR[$clog2(P.XLEN/8)-1:1], 1'b0};
+      default: dbg_HWSTRB = { (P.XLEN/8){1'b1} };
+    endcase
+  end
+
+  assign HWSTRB = (dbg_core_halt) ? dbg_HWSTRB : core_HWSTRB;
 
   // instantiate uncore if a bus interface exists
   if (P.BUS_SUPPORTED) begin : uncoregen // Hack to work around Verilator bug https://github.com/verilator/verilator/issues/4769

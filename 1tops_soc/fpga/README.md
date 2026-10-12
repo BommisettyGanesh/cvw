@@ -37,14 +37,28 @@ This directory contains the standalone, FPGA-tuned implementation of the **CORE-
 - **Non-Intrusive Core Freeze**: When `core_halt_o = 1`, `wallypipelinedsoc` asserts `ExternalStall` into the CPU hazard unit, freezing all 5 pipeline stages in place without altering registers.
 - **Exclusive Bus Priority**: While halted, the debugger gains unconditional priority to read/write instruction memory (`0x8000_0000`), data memory (`0x8000_2000`), boot ROM, and accelerator registers (`0x3000_0000`).
 
+### C. Subword-Accurate HWSTRB Byte Decoding (`src/wally/wallypipelinedsoc.sv`)
+- **Subword Overwrite Bug**: In the original uncore AHB interface, `HWSTRB` was hardcoded to `4'b1111` whenever the debugger held `dbg_core_halt = 1`. During single-byte or halfword transfers (e.g. streaming binary bytes via `U <count>`), this inadvertently caused the entire 32-bit word to be written with replicated byte lanes, corrupting adjacent bytes.
+- **Dynamic Decoding Fix**: Replaced with `dbg_HWSTRB` decoding logic:
+  - Word (`HSIZE = 2'b10`): `4'b1111`
+  - Halfword (`HSIZE = 2'b01`): `HADDR[1] ? 4'b1100 : 4'b0011`
+  - Byte (`HSIZE = 2'b00`): Decoded from `HADDR[1:0]` (`4'b0001`, `4'b0010`, `4'b0100`, or `4'b1000`)
+- **Result**: Arbitrary byte-stream uploads (`U`) and subword reads/writes operate correctly without corrupting neighboring memory bytes.
+
+### D. Glitch-Free Synchronous UART RX Monitor & Activity LED (`top/wally_soc_fpga_top.sv`)
+- **Combinational Loop Prevention**: Replaced asynchronous unclocked level-toggle logic with a clean synchronous receiver FSM clocked by 50 MHz `clk_soc` with a 2-stage metastability synchronizer.
+- **Visual Feedback**:
+  - Blinks **LED 15 (`led_rx_detect` on Pin L1)** with a 200 ms monostable pulse stretcher whenever any valid UART byte arrives.
+  - Latches **LED 15 solidly ON** upon successfully detecting the prompt character `]` (`0x5D`), providing instant visual confirmation that the ADP engine has entered command mode.
+
 ---
 
 ## 3. Physical Hardware Pinout (Basys 3)
 
 | Port Name | Board Location | Direction | Function |
 | :--- | :--- | :---: | :--- |
-| `clk` | **Pin W5** | Input | 100 MHz on-board oscillator |
-| `reset_btn` | **Pin U18 (btnC)** | Input | Center pushbutton (active-high system reset) |
+| `clk` | **Pin W5** | Input | 100 MHz on-board oscillator (MMCM produces 50 MHz `clk_soc`) |
+| `reset_btn` | **Pin U18 (btnC)** | Input | Center pushbutton (active-high system reset; OR'd with MMCM lock) |
 | `dbg_sel` | **Pin V17 (SW0)** | Input | Slide switch: `0` (Down) = UART, `1` (Up) = FT1248 |
 | `uart_rx` | **PMOD JA Pin 1 (J1)** | Input | Debugger UART RX (connect to USB-UART Dongle TXD) |
 | `uart_tx` | **PMOD JA Pin 2 (L2)** | Output | Debugger UART TX (connect to USB-UART Dongle RXD) |
@@ -52,8 +66,8 @@ This directory contains the standalone, FPGA-tuned implementation of the **CORE-
 | `ft1248_ss_n` | **PMOD JB Pin 2 (A16)** | Output | FT1248 Active-Low Chip Select (SS# to FT232H) |
 | `ft1248_miso` | **PMOD JB Pin 3 (B15)** | Input | FT1248 Read Available Status (MISO / RXF# from FT232H) |
 | `ft1248_miosio` | **PMOD JB Pin 4 (B16)** | Inout | FT1248 Bidirectional Serial Data Bus |
-| `UARTSin` | **Pin B18** | Input | Uncore Application UART RX (via onboard micro-USB cable) |
-| `UARTSout` | **Pin A18** | Output | Uncore Application UART TX (via onboard micro-USB cable) |
+| `UARTSin` | *Pin B18 (Unused)* | Input | Uncore Application UART RX (tied high in top-wrapper) |
+| `UARTSout` | *Pin A18 (Unused)* | Output | Uncore Application UART TX (unconnected in top-wrapper) |
 | `led_core_halted` | **Pin U16 (LED 0)** | Output | Status LED (lit when CPU core is halted by debugger) |
 | `led_dbg_sel` | **Pin E19 (LED 1)** | Output | Status LED (lit when FT1248 mode is selected) |
 | `led_rx_detect` | **Pin L1 (LED 15)** | Output | UART RX Activity / Prompt `]` Detector (Blinks ~200ms on any byte, latches ON upon detecting `]`) |
@@ -103,3 +117,86 @@ python3 sw/dbg_cli.py --protocol ft1248 --ftdi-url ftdi://ftdi:232h/1 halt
 python3 sw/dbg_cli.py --protocol ft1248 --ftdi-url ftdi://ftdi:232h/1 read_accel
 python3 sw/dbg_cli.py --protocol ft1248 --ftdi-url ftdi://ftdi:232h/1 resume
 ```
+
+---
+
+## 6. Interactive Serial Terminal Guide (HTerm / Minicom)
+
+You can communicate directly with the on-chip ASCII Debug Protocol (ADP) engine using **HTerm** (115200 Baud, 8-N-1, No Flow Control):
+
+1. **Boot / Reset Banner**:
+   When the FPGA powers on or when center pushbutton `btnC` is pressed, the debugger outputs:
+   ```text
+   0x50c1ab04
+   ```
+2. **Enter Command Mode (`<ESC>` / `0x1B`)**:
+   * In HTerm, set Input type to **`HEX`**, type `1B`, and send.
+   * The board will immediately reply with `]`. (Status LED 15 on Pin L1 also turns solidly ON upon detecting `]`).
+3. **Execute Commands**:
+   * Set Input type back to **`ASC`** with **Send on Enter = `CR`**.
+   - Query status: `C` $\rightarrow$ replies `C 0x01000000`.
+   - Exit command mode back to terminal passthrough: `X`.
+
+> [!TIP]
+> **Auto-Prompt on Boot Option**: If you prefer the debugger to output the prompt `]` automatically upon reset without having to type `<ESC>` / `0x1B`, you can uncomment line 137 and line 737 in `src/debugger/socdebug_adp_control.v` and rebuild the bitstream.
+
+---
+
+## 7. Factorial Program Demo (`factorial.bin`)
+
+The repository includes a bare-metal RV32I test program ([software/factorial.S](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/software/factorial.S) $\rightarrow$ `factorial.bin`, 76 bytes / `0x4C` bytes) that reads $n$ from Data Memory `0x80002000`, calculates $n!$, and writes the product to `0x80002004`.
+
+### Step-by-Step Execution Walkthrough:
+
+1. **Halt CPU**:
+   ```text
+   C 0202
+   ```
+   *(LED 0 `led_core_halted` turns ON).*
+
+2. **Clear IRAM using Fill (`F`)**:
+   ```text
+   A 80000000
+   V 00000000
+   F 200
+   ```
+   *(Rapidly zeroes out 512 words / 2 KB of instruction memory).*
+
+3. **Set Input $n = 5$ in Data Memory**:
+   ```text
+   A 80002000
+   W 00000005
+   W 00000000
+   ```
+
+4. **Upload Factorial Program (`U`)**:
+   ```text
+   A 80000000
+   U 4c
+   ```
+   In HTerm, click **Send File**, select `factorial.bin` (76 bytes), and send.  
+   The board streams all 76 bytes into IRAM and replies `U 0x0000004c` followed by `]`.
+
+5. **Restart & Resume CPU**:
+   ```text
+   C 0201
+   C 0101
+   C 0102
+   ```
+   *(LED 0 turns OFF; CPU executes `factorial.bin` from reset vector `0x80000000`).*
+
+6. **Halt & Check Result**:
+   ```text
+   C 0202
+   A 80002004
+   R
+   ```
+   **Expected Reply**: `R 0x00000078` ($120_{10} = 5!$).
+
+> [!NOTE]
+> **Understanding Read (`R`) Parameter Sizing**:
+> - **`R` (no parameter)**: Reads **1 word (32-bit)** and prints e.g. `R 0x00000078`.
+> - **`R 4` or `R 04` (1–2 hex digits)**: Interpreted as an **8-bit byte read count**. It prints 4 consecutive bytes (`R 0xXX`) broken down byte-by-byte, advancing the address by 1 byte each line.
+> - **`R 0004` (4 hex digits)**: Interpreted as a **16-bit half-word read count**.
+> - **`R 00000004` (8 hex digits)**: Interpreted as a **32-bit word read count**. It prints 4 consecutive 32-bit words (`R 0xXXXXXXXX`), advancing the address by 4 bytes each line.
+

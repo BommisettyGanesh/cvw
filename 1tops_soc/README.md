@@ -53,24 +53,32 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
 ```
 1tops_soc/
 ├── config/              # Configuration headers (config.vh, parameter-defs.vh)
+├── fpga/                # Standalone FPGA implementation targeting Digilent Basys 3
+│   ├── constrs/         # Physical pin constraints (basys3.xdc)
+│   ├── src/             # FPGA-tuned RTL sources (BRAM inference, debugger)
+│   ├── top/             # wally_soc_fpga_top.sv top-level wrapper
+│   ├── build_fpga.tcl   # Automated Vivado build script
+│   └── README.md        # FPGA board guide, HTerm serial terminal setup, and demos
 ├── schematics/          # Vivado project & TCL scripts for RTL schematic viewing
-├── software/            # Bare-metal C test programs, linker script, startup code
-│   ├── main.c           # Accelerator test program
+├── software/            # Bare-metal test programs, linker script, startup code
+│   ├── main.c           # Accelerator C test program
+│   ├── factorial.S      # Bare-metal RV32I factorial demo for FPGA testing
 │   ├── crt0.S           # Startup assembly
 │   ├── link.ld          # Linker script
 │   └── Makefile
 ├── src/                 # RTL source (SystemVerilog)
 │   ├── accelerator/     # Custom AHB accelerators (multiplier_ahb.sv)
+│   ├── debugger/        # Hardware debugger (UART, FT1248, ADP controller, AHB arbiter)
 │   ├── ebu/             # External Bus Unit (AHB-Lite arbiter)
-│   ├── generic/         # Flops, muxes, memories
-│   ├── hazard/          # Pipeline hazard unit
+│   ├── generic/         # Flops, muxes, memories (ram1p1rwbe.sv)
+│   ├── hazard/          # Pipeline hazard unit with ExternalStall core freeze
 │   ├── ieu/             # Integer Execution Unit (ALU, controller, regfile)
 │   ├── ifu/             # Instruction Fetch Unit
 │   ├── lsu/             # Load-Store Unit
 │   ├── mmu/             # Memory Management Unit (address decoders, PMA/PMP)
 │   ├── privileged/      # CSRs, trap handling, privilege modes
 │   ├── uncore/          # SoC peripherals (UART, GPIO, SPI, CLINT, PLIC, RAM, ROM)
-│   └── wally/           # Top-level SoC and core wrappers
+│   └── wally/           # Top-level SoC and core wrappers (wallypipelinedsoc.sv)
 ├── testbench/           # Verilator testbench (tb.sv, sim_main.cpp)
 ├── filelist.f           # Verilator source file list
 ├── Makefile             # Top-level build: `make` compiles software + runs simulation
@@ -80,6 +88,10 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
 ## Features
 
 - **Pipelined RISC-V Core**: Minimal rv32i instruction set. No FPU, no caches, no MDU, no branch predictors, no TLBs, no compressed/crypto/bitmanip extensions.
+- **Dual-Protocol Hardware Debugger**: Integrated ASCII Debug Protocol (ADP) engine supporting both **UART** (115200 baud on PMOD JA) and **FT1248** (high-speed synchronous bus on PMOD JB) with physical switch selection (`dbg_sel`).
+- **Non-Intrusive Core Freeze & Arbitrated Bus Master**: Halts the 5-stage CPU pipeline on the fly via `ExternalStall` in `hazard.sv`, granting full AHB-Lite bus mastership to the debugger through `ahb_mux.sv`.
+- **Subword-Accurate Memory Access**: `HWSTRB` dynamic byte/halfword/word strobe decoding enables clean byte streaming via binary upload (`U`) without corrupting neighboring memory words.
+- **Dedicated FPGA Implementation (Basys 3)**: Synthesizes instruction RAM (`ram_i`) and data RAM (`ram_d`) into dedicated hardware `RAMB36E1` Block RAM primitives. Includes synchronous UART RX monitoring and prompt detection on LED 15 (`led_rx_detect`).
 - **AHB-Lite Interconnect**: Standard bus interface for attaching IP blocks.
 - **External Accelerator Support**: Dedicated AHB region at `0x3000_0000` for custom accelerators (currently a hardware multiplier).
 - **Full Uncore**: UART, GPIO, SPI, CLINT, PLIC, Boot ROM, and Independent Instruction/Data RAMs are all present and functional.
@@ -185,3 +197,62 @@ make
 2. It copies the `software/test_instr.mem` and `software/test_data.mem` (your compiled C code) into the testbench directory.
 3. It runs the simulation. The internal `ram_ahb.sv` memory modules use `$readmemh` to preload your C code into the Instruction and Data SRAMs.
 4. The simulation executes, and a `trace.vcd` waveform is generated (limited to AHB signals to reduce size) for debugging in GTKWave!
+
+---
+
+## 6. Dedicated FPGA Implementation & Hardware Debugger (Basys 3)
+
+The `fpga/` directory provides a ready-to-synthesize implementation for the **Digilent Basys 3** board (`xc7a35tcpg236-1`).
+
+### Physical Hardware Pinout
+
+| Port Name | Board Location | Direction | Function |
+| :--- | :--- | :---: | :--- |
+| `clk` | **Pin W5** | Input | 100 MHz oscillator (MMCM generates 50 MHz `clk_soc`) |
+| `reset_btn` | **Pin U18 (btnC)** | Input | Center pushbutton (active-high system reset) |
+| `dbg_sel` | **Pin V17 (SW0)** | Input | Slide switch: `0` (Down) = UART, `1` (Up) = FT1248 |
+| `uart_rx` | **PMOD JA Pin 1 (J1)** | Input | Debugger UART RX (connect to USB-UART Dongle TXD) |
+| `uart_tx` | **PMOD JA Pin 2 (L2)** | Output | Debugger UART TX (connect to USB-UART Dongle RXD) |
+| `ft1248_clk` | **PMOD JB Pin 1 (A14)** | Output | FT1248 Serial Clock (SCLK to FT232H) |
+| `ft1248_ss_n` | **PMOD JB Pin 2 (A16)** | Output | FT1248 Active-Low Chip Select (SS# to FT232H) |
+| `ft1248_miso` | **PMOD JB Pin 3 (B15)** | Input | FT1248 Read Available Status (MISO / RXF# from FT232H) |
+| `ft1248_miosio` | **PMOD JB Pin 4 (B16)** | Inout | FT1248 Bidirectional Serial Data Bus |
+| `led_core_halted` | **Pin U16 (LED 0)** | Output | Status LED (lit when CPU core is halted by debugger) |
+| `led_dbg_sel` | **Pin E19 (LED 1)** | Output | Status LED (lit when FT1248 mode is selected) |
+| `led_rx_detect` | **Pin L1 (LED 15)** | Output | UART RX Activity / Prompt `]` Detector (Blinks ~200ms on any byte, latches ON upon detecting `]`) |
+
+### Serial Terminal Interaction (HTerm)
+
+Configure HTerm with **115200 Baud, 8 Data Bits, 1 Stop Bit, No Parity, No Flow Control**:
+
+1. **Boot Banner**:
+   On power-on or pressing reset button `btnC`, the debugger outputs:
+   ```text
+   0x50c1ab04
+   ```
+2. **Wake up Command Mode (`<ESC>` / `0x1B`)**:
+   In HTerm, switch input to **`HEX`**, type `1B`, and send. The board responds with prompt `]` and latches LED 15 ON.
+3. **Execute Commands**:
+   Switch input back to **`ASC`** with **Send on Enter = `CR`**:
+   - `C 0202` — Halt CPU pipeline (`led_core_halted` turns ON).
+   - `A <hex_addr>` — Set 32-bit AHB address pointer.
+   - `R` / `W <data>` — Read or write 32-bit word at current pointer.
+   - `F <count>` — Fill `<count>` words with reference value in `V`.
+   - `U <count>` — Stream `<count>` raw binary bytes sequentially into memory.
+   - `C 0201` / `C 0101` — Assert / deassert CPU reset vector.
+   - `C 0102` — Resume CPU pipeline execution.
+   - `X` — Exit back to terminal passthrough mode.
+
+### Bare-Metal Factorial Demo (`software/factorial.S`)
+
+To test the core, memory, and debugger end-to-end:
+1. Compile the demo: `cd software && make factorial.bin` (produces 76-byte `factorial.bin`).
+2. Halt CPU: `C 0202`
+3. Zero instruction memory: `A 80000000` $\rightarrow$ `V 00000000` $\rightarrow$ `F 200`
+4. Set input $n = 5$ at Data RAM `0x80002000`: `A 80002000` $\rightarrow$ `W 00000005` $\rightarrow$ `W 00000000`
+5. Upload program: `A 80000000` $\rightarrow$ `U 4c` $\rightarrow$ send `factorial.bin` via HTerm **Send File**.
+6. Restart and run: `C 0201` $\rightarrow$ `C 0101` $\rightarrow$ `C 0102`
+7. Halt and check result: `C 0202` $\rightarrow$ `A 80002004` $\rightarrow$ `R` $\rightarrow$ replies `R 0x00000078` ($120_{10} = 5!$).
+
+For detailed guides, see [fpga/README.md](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/README.md) and [src/debugger/COMMANDS.md](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/src/debugger/COMMANDS.md).
+

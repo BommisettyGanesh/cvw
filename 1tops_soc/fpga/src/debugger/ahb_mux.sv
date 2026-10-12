@@ -75,28 +75,9 @@ module ahb_mux #(
 
     // Next address grant logic:
     // 0 = M0 (Core), 1 = M1 (Debugger)
-    reg next_grant_addr;
-
-    always @(*) begin
-        if (core_halt) begin
-            // When core is halted, Debugger has absolute priority
-            if (m1_req)
-                next_grant_addr = 1'b1;
-            else if (m0_req)
-                next_grant_addr = 1'b0;
-            else
-                next_grant_addr = grant_addr;
-        end else begin
-            // When core is running, Core has default priority
-            // Debugger can take bus if Core is IDLE
-            if (m0_req)
-                next_grant_addr = 1'b0;
-            else if (m1_req)
-                next_grant_addr = 1'b1;
-            else
-                next_grant_addr = grant_addr;
-        end
-    end
+    // Master 1 (Debugger) has priority whenever it requests the bus (m1_req).
+    // Otherwise, grant defaults to Master 0 (Core) to ensure M0_HREADY is asserted and prevent deadlocks.
+    wire next_grant_addr = m1_req;
 
     // Sequential update of grants
     always @(posedge HCLK or negedge HRESETn) begin

@@ -154,8 +154,11 @@ Each protocol interface has its own independent external pins connected to real 
 | **`ft1248_ss_n`** | 1 | Output | Push-Pull Out | `1` | **FT1248 Slave Select (SS#)**: Active-low chip select driven by SoC. |
 | **`ft1248_miso`** | 1 | Input | CMOS In (Pull-Up) | `1` | **FT1248 MISO / RXF#**: Driven by FTDI device (low = data ready to read). |
 | **`ft1248_miosio`** | 1 (or 4, 8) | Inout | Bidirectional Tristate | `Z` | **FT1248 MIOSIO Data**: Bidirectional data bus. In idle, bit 0 reflects TXE# (low = FTDI write FIFO ready). |
-| **`UARTSin`** | 1 | Input | CMOS In (Pull-Up) | `1` | **Uncore Application UART RX**: Dedicated to user software runtime terminal. |
+| **`UARTSin`** | 1 | Input | CMOS In (Pull-Up) | `1` | **Uncore Application UART RX**: Dedicated to user software runtime terminal (tied high in top-wrapper). |
 | **`UARTSout`** | 1 | Output | Push-Pull Out | `1` | **Uncore Application UART TX**: Dedicated to user software runtime terminal. |
+| **`led_core_halted`** | 1 | Output | Push-Pull Out | `0` | **Core Halted Indicator (LED 0, Pin U16)**: Lit when CPU pipeline is frozen (`core_halt_o = 1`). |
+| **`led_dbg_sel`** | 1 | Output | Push-Pull Out | `0` | **Protocol Indicator (LED 1, Pin E19)**: Reflects `dbg_sel` mode (OFF = UART, ON = FT1248). |
+| **`led_rx_detect`** | 1 | Output | Push-Pull Out | `0` | **UART RX Monitor & Prompt Detector (LED 15, Pin L1)**: Pulses ~200ms on any valid byte; latches ON upon detecting prompt `]`. |
 
 ---
 
@@ -221,6 +224,20 @@ M1 (DBG)  |  - Pipelined grant tracking     |
 - **Priority Arbitration**: When `core_halt = 1`, Master 1 (Debugger) is granted unconditional exclusive bus ownership.
 - **Pipelined Tracking**: Addresses driven in phase $N$ are paired with data phases in $N+1$ via registered `grant_data`.
 - **Slave Multiplexing**: Return data (`HRDATA`), `HREADY`, and `HRESP` are routed back exclusively to the granted master.
+
+### 5.1 Subword Byte Strobe Decoding (`HWSTRB`)
+In `wallypipelinedsoc.sv`, when `dbg_core_halt = 1`, write strobes are dynamically decoded according to transfer size and address offsets:
+- **Word (`HSIZE = 2'b10`)**: `dbg_HWSTRB = 4'b1111`
+- **Halfword (`HSIZE = 2'b01`)**: `dbg_HWSTRB = HADDR[1] ? 4'b1100 : 4'b0011`
+- **Byte (`HSIZE = 2'b00`)**: `dbg_HWSTRB` decoded via `HADDR[1:0]` (`4'b0001`, `4'b0010`, `4'b0100`, `4'b1000`)
+This ensures byte stream uploads (`U <count>`) write each byte accurately to its targeted byte lane without overwriting neighboring bytes in memory.
+
+### 5.2 Glitch-Free Synchronous UART RX Monitor (`wally_soc_fpga_top.sv`)
+To monitor incoming serial traffic on PMOD JA without creating combinational loops:
+- Implements a 2-stage synchronizer (`rx_sync`) clocked at 50 MHz (`clk_soc`).
+- Samples at the center of each bit period at 115,200 baud.
+- Drives a monostable pulse stretcher (~200 ms) to flash **LED 15 (Pin L1)** upon byte reception.
+- Compares each received byte to ASCII `]` (`0x5D`) and latches a sticky bit ON, providing visual indication that the ADP engine has entered command mode.
 
 ---
 
