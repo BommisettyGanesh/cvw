@@ -144,7 +144,63 @@ You can communicate directly with the on-chip ASCII Debug Protocol (ADP) engine 
 
 ## 7. Factorial Program Demo (`factorial.bin`)
 
-The repository includes a bare-metal RV32I test program ([software/factorial.S](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/software/factorial.S) $\rightarrow$ `factorial.bin`, 76 bytes / `0x4C` bytes) that reads $n$ from Data Memory `0x80002000`, calculates $n!$, and writes the product to `0x80002004`.
+The repository includes a bare-metal RV32I test program ([`../software/factorial.S`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/software/factorial.S) $\rightarrow$ `factorial.bin`, 76 bytes / `0x4C` bytes) that reads $n$ from Data Memory `0x80002000`, calculates $n!$, and writes the product to `0x80002004`.
+
+### Building `*.bin` from `*.S` Assembly
+
+If you need to recompile `factorial.bin` or compile a new assembly test program (`<program>.S` $\rightarrow$ `<program>.bin`) for execution on the FPGA:
+
+#### Prerequisites
+Ensure the GNU RISC-V bare-metal toolchain is in your `PATH`:
+- Supported toolchain prefixes: `riscv-none-elf-` or `riscv64-unknown-elf-`
+- Check availability:
+  ```bash
+  which riscv-none-elf-gcc || which riscv64-unknown-elf-gcc
+  ```
+
+#### Method 1: Using the Software Makefile (Recommended)
+From either the `fpga/` directory or `software/` directory:
+```bash
+# From 1tops_soc/fpga:
+make -C ../software factorial.bin
+
+# Or navigate to 1tops_soc/software directly:
+cd ../software
+make factorial.bin
+```
+The Makefile automatically detects the installed RISC-V compiler prefix (`riscv-none-elf-` or `riscv64-unknown-elf-`), compiles `factorial.S` against `link.ld`, extracts the `.text` section with `objcopy`, and copies `factorial.bin` into `../fpga/factorial.bin`.
+
+#### Method 2: Manual Compilation for Any Custom `*.S` Program
+To compile any custom assembly file (e.g., `my_test.S`):
+
+1. **Assemble and Link for RV32I**:
+   ```bash
+   cd ../software
+   riscv-none-elf-gcc -march=rv32i -mabi=ilp32 -nostartfiles -nostdlib -T link.ld my_test.S -o my_test.elf
+   ```
+   > [!IMPORTANT]
+   > - `-march=rv32i -mabi=ilp32`: The Wally 1TOPS SoC implements the base RV32I instruction set without standard M/A/F/D/C extensions. Multiplications must use shift-and-add loops or the hardware accelerator at `0x3000_0000`.
+   > - `-T link.ld`: Memory map locates Instruction RAM (`.text`) at `0x8000_0000` (reset vector) and Data RAM (`.data`/`.bss`) at `0x8000_2000`.
+
+2. **Extract Pure Binary Machine Code**:
+   ```bash
+   riscv-none-elf-objcopy -O binary --only-section=.text my_test.elf my_test.bin
+   cp my_test.bin ../fpga/
+   ```
+
+3. **Inspect Disassembly (Optional)**:
+   ```bash
+   riscv-none-elf-objdump -d my_test.elf
+   ```
+
+4. **Determine Byte Length for ADP Upload (`U`)**:
+   Check the exact size in bytes and convert to hexadecimal:
+   ```bash
+   python3 -c "import os; s = os.path.getsize('my_test.bin'); print(f'Size: {s} bytes (0x{s:x})')"
+   ```
+   For example, a 76-byte file is `0x4C` bytes, so the ADP upload command in HTerm is `U 4c`.
+
+---
 
 ### Step-by-Step Execution Walkthrough:
 

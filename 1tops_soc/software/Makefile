@@ -1,5 +1,6 @@
-CC = riscv64-unknown-elf-gcc
-OBJCOPY = riscv64-unknown-elf-objcopy
+RISCV_PREFIX ?= $(shell which riscv64-unknown-elf-gcc >/dev/null 2>&1 && echo riscv64-unknown-elf- || (which riscv-none-elf-gcc >/dev/null 2>&1 && echo riscv-none-elf- || echo riscv64-unknown-elf-))
+CC = $(RISCV_PREFIX)gcc
+OBJCOPY = $(RISCV_PREFIX)objcopy
 
 CFLAGS = -march=rv32i -mabi=ilp32 -mcmodel=medany -nostartfiles -nostdlib -T link.ld -O2
 

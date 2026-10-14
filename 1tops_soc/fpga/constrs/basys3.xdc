@@ -21,13 +21,13 @@ set_property PULLDOWN TRUE [get_ports dbg_sel]
 
 ## 4. Dedicated Debugger UART on PMOD JA (Top Row)
 ## Pin 1 (J1) = uart_rx (Connect to external USB-UART Dongle TXD)
-set_property PACKAGE_PIN J1 [get_ports uart_rx]
-set_property IOSTANDARD LVCMOS33 [get_ports uart_rx]
-set_property PULLUP TRUE [get_ports uart_rx]
+#set_property PACKAGE_PIN J1 [get_ports uart_rx]
+#set_property IOSTANDARD LVCMOS33 [get_ports uart_rx]
+#set_property PULLUP TRUE [get_ports uart_rx]
 
 ## Pin 2 (L2) = uart_tx (Connect to external USB-UART Dongle RXD)
-set_property PACKAGE_PIN L2 [get_ports uart_tx]
-set_property IOSTANDARD LVCMOS33 [get_ports uart_tx]
+#set_property PACKAGE_PIN L2 [get_ports uart_tx]
+#set_property IOSTANDARD LVCMOS33 [get_ports uart_tx]
 
 ## 5. Dedicated FT1248 High-Speed Interface on PMOD JB (Top Row)
 ## Pin 1 (A14) = SCLK Clock Out
@@ -54,12 +54,12 @@ set_property DRIVE 8 [get_ports ft1248_miosio]
 
 ## 6. Optional: Uncore Application 16550 UART (on On-Board Micro-USB Port B18/A18)
 ##    Allows viewing runtime printf() console output through the onboard USB cable!
-#set_property PACKAGE_PIN B18 [get_ports UARTSin]
-#set_property IOSTANDARD LVCMOS33 [get_ports UARTSin]
-#set_property PULLUP TRUE [get_ports UARTSin]
+set_property PACKAGE_PIN B18 [get_ports uart_rx]
+set_property IOSTANDARD LVCMOS33 [get_ports uart_rx]
+set_property PULLUP TRUE [get_ports uart_rx]
 
-#set_property PACKAGE_PIN A18 [get_ports UARTSout]
-#set_property IOSTANDARD LVCMOS33 [get_ports UARTSout]
+set_property PACKAGE_PIN A18 [get_ports uart_tx]
+set_property IOSTANDARD LVCMOS33 [get_ports uart_tx]
 
 ## 7. Status LEDs (Optional visual feedback)
 set_property PACKAGE_PIN U16 [get_ports led_core_halted]
