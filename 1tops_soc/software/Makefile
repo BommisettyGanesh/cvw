@@ -4,7 +4,7 @@ OBJCOPY = $(RISCV_PREFIX)objcopy
 
 CFLAGS = -march=rv32i -mabi=ilp32 -mcmodel=medany -nostartfiles -nostdlib -T link.ld -O2
 
-all: test_instr.mem test_data.mem factorial.bin
+all: test_instr.mem test_data.mem factorial.bin trap_test.bin profile_accel.bin spi_test.bin
 
 test.elf: crt0.S main.c
 	$(CC) $(CFLAGS) $^ -o $@
@@ -20,5 +20,26 @@ factorial.bin: factorial.elf
 	$(OBJCOPY) -O binary --only-section=.text $< $@
 	cp -f $@ ../fpga/factorial.bin
 
+trap_test.elf: trap_test.S
+	$(CC) -march=rv32i_zicsr -mabi=ilp32 -nostartfiles -nostdlib -T link.ld $< -o $@
+
+trap_test.bin: trap_test.elf
+	$(OBJCOPY) -O binary --only-section=.text $< $@
+	cp -f $@ ../fpga/trap_test.bin
+
+profile_accel.elf: profile_accel.S
+	$(CC) -march=rv32i -mabi=ilp32 -nostartfiles -nostdlib -T link.ld $< -o $@
+
+profile_accel.bin: profile_accel.elf
+	$(OBJCOPY) -O binary --only-section=.text $< $@
+	cp -f $@ ../fpga/profile_accel.bin
+
+spi_test.elf: spi_test.S
+	$(CC) -march=rv32i -mabi=ilp32 -nostartfiles -nostdlib -T link.ld $< -o $@
+
+spi_test.bin: spi_test.elf
+	$(OBJCOPY) -O binary --only-section=.text $< $@
+	cp -f $@ ../fpga/spi_test.bin
+
 clean:
-	rm -f test.elf test.bin test_instr.mem test_data.mem factorial.elf factorial.bin ../fpga/factorial.bin
+	rm -f test.elf test.bin test_instr.mem test_data.mem factorial.elf factorial.bin trap_test.elf trap_test.bin profile_accel.elf profile_accel.bin spi_test.elf spi_test.bin ../fpga/factorial.bin ../fpga/trap_test.bin ../fpga/profile_accel.bin ../fpga/spi_test.bin

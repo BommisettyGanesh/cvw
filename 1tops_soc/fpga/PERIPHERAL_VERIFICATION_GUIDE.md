@@ -236,23 +236,33 @@ Save the following assembly program as `../software/trap_test.S`:
 .globl _start
 
 _start:
-    # 1. Initialize trap vector to handle_trap (Direct Mode)
+    # 1. Write Boot Signature to Data RAM (0x80002000 = 0xAA)
+    lui   s0, 0x80002
+    li    t0, 0xaa
+    sw    t0, 0x000(s0)
+
+    # 2. Clear Mailbox in Data RAM (0x80002010 = 0, 0x80002014 = 0)
+    sw    zero, 0x010(s0)
+    sw    zero, 0x014(s0)
+
+    # 3. Initialize trap vector to handle_trap (Direct Mode)
     la    t0, handle_trap
     csrw  mtvec, t0
 
-    # 2. Clear Mailbox in Data RAM (0x80002010 = 0)
-    lui   s0, 0x80002
-    sw    zero, 0x010(s0)
-
-    # 3. Enable Machine Software Interrupts (mie.MSIE = bit 3)
+    # 4. Enable Machine Software Interrupts (mie.MSIE = bit 3)
     li    t1, 0x08
     csrs  mie, t1
 
-    # 4. Enable Global Interrupts (mstatus.MIE = bit 3)
+    # 5. Enable Global Interrupts (mstatus.MIE = bit 3)
     csrsi mstatus, 0x08
 
+    # 6. Write Ready Signature to Data RAM (0x80002000 = 0xBB)
+    #    Confirms interrupts are armed and CPU is entering wait loop!
+    li    t0, 0xbb
+    sw    t0, 0x000(s0)
+
 wait_loop:
-    # 5. Wait For Interrupt (or tight loop if WFI is NOP)
+    # 7. Wait For Interrupt
     wfi
     j     wait_loop
 
@@ -261,15 +271,22 @@ wait_loop:
 # -------------------------------------------------------------
 .align 4
 handle_trap:
-    # Read mcause to confirm it is Machine Software Interrupt (cause = 3)
+    # In RISC-V, Interrupt mcause has bit 31 set!
+    # For Machine Software Interrupt, mcause = 0x80000003 (not 3)
     csrr  t2, mcause
-    li    t3, 3
+
+    # Record raw mcause in Data RAM at 0x80002014 for diagnostics
+    lui   t0, 0x80002
+    sw    t2, 0x014(t0)
+
+    # Verify cause is Machine Software Interrupt (0x80000003)
+    li    t3, 0x80000003
     bne   t2, t3, trap_exit
 
     # Increment Mailbox at 0x80002010 (indicates handler executed)
-    lw    t4, 0x010(s0)
+    lw    t4, 0x010(t0)
     addi  t4, t4, 1
-    sw    t4, 0x010(s0)
+    sw    t4, 0x010(t0)
 
     # Clear MSIP in CLINT (Address 0x02000000 = 0) to acknowledge interrupt
     lui   t5, 0x02000
@@ -284,15 +301,16 @@ trap_exit:
 1. **Compile & Extract Binary**:
    ```bash
    cd ../software
-   riscv-none-elf-gcc -march=rv32i -mabi=ilp32 -nostartfiles -nostdlib -T link.ld trap_test.S -o trap_test.elf
+   riscv-none-elf-gcc -march=rv32i_zicsr -mabi=ilp32 -nostartfiles -nostdlib -T link.ld trap_test.S -o trap_test.elf
    riscv-none-elf-objcopy -O binary --only-section=.text trap_test.elf trap_test.bin
    cp trap_test.bin ../fpga/
    ```
+
 2. **Check Binary Size**:
    ```bash
    python3 -c "import os; s = os.path.getsize('trap_test.bin'); print(f'Size: {s} bytes (hex: 0x{s:x})')"
    ```
-   *(Assume size is `0x58` bytes).*
+   *(Output is 120 bytes, which is `0x78` bytes).*
 
 3. **In HTerm**:
    ```text
@@ -301,29 +319,43 @@ trap_exit:
    V 00000000          # Zero out IRAM
    F 200
    A 80000000
-   U 58                # Send File -> trap_test.bin
+   U 78                # Send File -> trap_test.bin (0x78 = 120 bytes)
    C 0201              # Resume CPU
    C 0101              # Reset CPU
    C 0102
    ```
-   *(Core is now actively waiting in `wait_loop`).*
+   *(Core boots and sets `0x80002000 = 0xBB`, then idles in `wait_loop`).*
 
-4. **Inject Interrupt Live from HTerm**:
+4. **Sanity Check Core Running**:
+   ```text
+   C 0202              # Halt CPU
+   A 80002000          # Check CPU Boot Signature
+   R
+   C 0201              # Resume CPU
+   ```
+   *Expected Response*: `R 0x000000BB` (proves the core successfully booted and armed interrupts!).
+
+5. **Inject Software Interrupt**:
    ```text
    A 02000000
    W 00000001
    ```
-   *(Asserts `MSIP` $\rightarrow$ Core immediately enters `handle_trap`, increments mailbox, clears `MSIP`, and returns).*
+   *(Asserts `MSIP` $\rightarrow$ Core immediately enters `handle_trap`, records `mcause` to `0x80002014`, increments mailbox at `0x80002010`, clears `MSIP`, and returns).*
 
-5. **Verify Execution**:
+6. **Verify Execution**:
    ```text
    C 0202              # Halt CPU
    A 80002010          # Check DMem mailbox
    R
    ```
    *Expected Response*: `R 0x00000001`!
+   ```text
+   A 80002014          # Check trapped mcause
+   R
+   ```
+   *Expected Response*: `R 0x80000003` (confirms Machine Software Interrupt).
    
-6. **Repeat Test**:
+7. **Repeat Test**:
    Write `W 00000001` to `0x02000000` again, resume core, halt, and read `0x80002010`. The value will increment to `R 0x00000002`.
 
 ---
@@ -405,23 +437,27 @@ The SPI controller (`spi_apb.sv`) features synchronous 8-byte transmit and recei
 
 ---
 
+---
+
 ### Step-by-Step HTerm Procedure
+
+#### Part A: Zero-CPU Internal Loopback Verification via `SPI_RXDATA`
+Because `P.SPI_LOOPBACK_TEST = 1` is configured in hardware, the SPI transmitter's output pin (`SPIOut`) is internally connected to the receive shift register (`ShiftIn`). 
+
+> [!NOTE]
+> **Why `SPI_TXDATA` reads `0x00000000` over HTerm**:
+> Even with the slowest divider (`SckDiv = 0x0FFF`), the SPI controller transmits each byte in $1.31\text{ ms}$ ($8 \times 2 \times 4096 / 50\text{ MHz}$). Because typing or sending commands over UART at 115200 baud takes $>5\text{ ms}$ per command, the TX FIFO transmits each byte and empties before the next write arrives! The transmitted bytes are not lost—they are sitting in the synchronous **RX FIFO**!
 
 1. **Halt CPU**:
    ```text
    C 0202
    ```
-2. **Configure slow clock divider** (so FIFO doesn't empty instantly):
+2. **Configure slow clock divider**:
    ```text
    A 10040000
    W 00000fff
    ```
-3. **Configure TX Watermark to trigger when $\le 2$ entries remain**:
-   ```text
-   A 10040050
-   W 00000002
-   ```
-4. **Burst-write 8 bytes to saturate the TX FIFO**:
+3. **Transmit Test Bytes to `SPI_TXDATA`**:
    ```text
    A 10040048
    W 00000011
@@ -431,27 +467,68 @@ The SPI controller (`spi_apb.sv`) features synchronous 8-byte transmit and recei
    W 00000033
    A 10040048
    W 00000044
-   A 10040048
-   W 00000055
-   A 10040048
-   W 00000066
-   A 10040048
-   W 00000077
-   A 10040048
-   W 00000088
    ```
-5. **Check FIFO Full Flag** (Read `SPI_TXDATA`):
+   *(Each byte is serialized, looped back, and pushed into `rxFIFO`).*
+
+4. **Verify Received Loopback Data in `SPI_RXDATA` (`0x1004_004C`)**:
+   Bit 31 is `ReceiveFIFOEmpty` (`0` = valid byte available, `1` = empty). Reading this address pops the FIFO:
    ```text
-   A 10040048
+   A 1004004c
    R
    ```
-   *Expected Response*: `R 0x80000000` (Bit 31 = 1 indicates FIFO is full).
-6. **Check Watermark Pending Flag in `SPI_IP`**:
+   *Expected Response*: `R 0x00000011` (Bit 31 = 0, Byte 1 = 0x11).
    ```text
-   A 10040074
+   A 1004004c
    R
    ```
-   *Expected*: Bit 0 is `0` while FIFO contains $>2$ bytes. As the SPI transmitter shifts bits out and FIFO drops to $\le 2$ bytes, Bit 0 flips to `1` (`R 0x00000001`).
+   *Expected Response*: `R 0x00000022` (Byte 2).
+   ```text
+   A 1004004c
+   R
+   ```
+   *Expected Response*: `R 0x00000033` (Byte 3).
+   ```text
+   A 1004004c
+   R
+   ```
+   *Expected Response*: `R 0x00000044` (Byte 4).
+   ```text
+   A 1004004c
+   R
+   ```
+   *Expected Response*: `R 0x80000000` (Bit 31 = 1 confirms FIFO has been completely popped and is now empty!).
+
+---
+
+#### Part B: True Hardware Saturation & TX FIFO Full Verification (`spi_test.bin`)
+To catch Bit 31 of `SPI_TXDATA` (`TransmitFIFOFull = 1`), writes must occur faster than the $1.31\text{ ms}$ transmission rate. The dedicated micro-program [`spi_test.bin`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/spi_test.bin) executes 8 consecutive stores in **320 nanoseconds**, samples `SPI_TXDATA`, and writes the result to Data RAM (`0x8000_2000`).
+
+1. **Upload `spi_test.bin` (124 bytes = `0x7c`)**:
+   ```text
+   C 0202              # Halt CPU
+   A 80000000
+   V 00000000
+   F 200
+   A 80000000
+   U 7c                # Send File -> spi_test.bin (0x7c = 124 bytes)
+   C 0201              # Resume CPU
+   C 0101              # Reset CPU
+   C 0102
+   ```
+
+2. **Wait ~1 second**, then halt and inspect results:
+   ```text
+   C 0202              # Halt CPU
+   A 80002000          # Check Sampled SPI_TXDATA
+   R
+   ```
+   *Expected Response*: `R 0x80000000` (Bit 31 = 1 proves TX FIFO hit full saturation!).
+
+   ```text
+   A 80002004          # Check First Received Loopback Byte
+   R
+   ```
+   *Expected Response*: `R 0x00000011` (proves data serialized and looped back successfully).
 
 ---
 
@@ -475,8 +552,8 @@ Save as `../software/profile_accel.S`:
 .globl _start
 
 _start:
-    # Base pointer to CLINT (0x0200_0000)
-    lui   s0, 0x02000
+    # Base pointer to CLINT mtime (0x0200_BFF8)
+    lui   s0, 0x0200c
     # Base pointer to Accelerator (0x3000_0000)
     lui   s1, 0x30000
     # Base pointer to DMem Results (0x8000_2000)
@@ -486,8 +563,8 @@ _start:
     li    a0, 12
     li    a1, 10
 
-    # 1. Sample START mtime (Offset 0xBFF8)
-    lw    t0, 0xbff8(s0)
+    # 1. Sample START mtime (0x0200C000 - 8 = 0x0200BFF8)
+    lw    t0, -8(s0)
 
     # 2. Trigger Accelerator Transaction
     sw    a0, 0x0(s1)         # Write Operand A
@@ -495,7 +572,7 @@ _start:
     lw    a2, 0x8(s1)         # Read Product
 
     # 3. Sample END mtime
-    lw    t1, 0xbff8(s0)
+    lw    t1, -8(s0)
 
     # 4. Compute Duration: elapsed = t1 - t0
     sub   t2, t1, t0
@@ -522,7 +599,7 @@ done:
    ```text
    C 0202
    A 80000000
-   U <byte_count>      # Send profile_accel.bin
+   U 3c                # Send File -> profile_accel.bin (0x3c = 60 bytes)
    C 0201
    C 0101
    C 0102
