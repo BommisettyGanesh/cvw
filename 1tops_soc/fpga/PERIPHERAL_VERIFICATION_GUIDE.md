@@ -78,6 +78,12 @@ The integrated 16550 UART (`uartPC16550D.sv`) provides an internal **Loopback Di
 
 #### Part A: Bus Verification via Scratchpad Register (`SCR`)
 The scratchpad register retains any 8-bit value written to it and has no effect on UART operations.
+
+> [!IMPORTANT]
+> **UART Size Requirement**: The on-chip address decoder (`adrdecs.sv`) strictly limits UART access to **8-bit bytes** (`SizeMask = 4'b0001`). 
+> - Always use **2-digit hex values** for writes (`W 55`, not `W 00000055`), which generates `HSIZE = 3'b000` (8-bit byte).
+> - Always specify count **`1`** for reads (`R 1`, not bare `R`), which commands the debugger to execute an 8-bit byte read instead of defaulting to a 32-bit word read.
+
 1. **Halt CPU**:
    ```text
    C 0202
@@ -85,25 +91,27 @@ The scratchpad register retains any 8-bit value written to it and has no effect 
 2. **Write alternating bit pattern `0x55`**:
    ```text
    A 10000007
-   W 00000055
+   W 55
    ```
+   *Expected Response*: `W 0x55` (and address auto-increments to `0x10000008`).
 3. **Read back**:
    ```text
    A 10000007
-   R
+   R 1
    ```
-   *Expected Response*: `R 0x00000055` (or replicated byte `0x55555555`).
+   *Expected Response*: `R 0x55`.
 4. **Write complementary bit pattern `0xAA`**:
    ```text
    A 10000007
-   W 000000AA
+   W aa
    ```
+   *Expected Response*: `W 0xAA`.
 5. **Read back**:
    ```text
    A 10000007
-   R
+   R 1
    ```
-   *Expected Response*: `R 0x000000AA`.
+   *Expected Response*: `R 0xAA`.
 
 > [!NOTE]
 > If Part A succeeds, you have verified the APB bridge, peripheral clocking, and subword write strobes (`HWSTRB`) to the UART block.
@@ -112,35 +120,35 @@ The scratchpad register retains any 8-bit value written to it and has no effect 
 1. **Enable Internal Loopback Mode** (`MCR[4] = 1`):
    ```text
    A 10000004
-   W 00000010
+   W 10
    ```
 2. **Verify Line Status Register (`LSR`) Initial State**:
    ```text
    A 10000005
-   R
+   R 1
    ```
-   *Expected*: Bit 0 (`DR` - Data Ready) is `0`. Bit 5 (`THRE` - Transmitter Holding Register Empty) is `1` (e.g. `0x00000060`).
+   *Expected*: Bit 0 (`DR` - Data Ready) is `0`. Bit 5 (`THRE` - Transmitter Holding Register Empty) is `1` (e.g. `0x60`).
 3. **Transmit Test Character `0xA5` via `THR`**:
    ```text
    A 10000000
-   W 000000A5
+   W a5
    ```
 4. **Check Line Status Register (`LSR`)**:
    ```text
    A 10000005
-   R
+   R 1
    ```
-   *Expected*: Bit 0 is now `1` (`0x00000061` or `0x00000001`), confirming character received and sitting in FIFO.
+   *Expected*: Bit 0 is now `1` (`0x61` or `0x01`), confirming character received and sitting in FIFO.
 5. **Read Received Character from `RBR`**:
    ```text
    A 10000000
-   R
+   R 1
    ```
-   *Expected Response*: `R 0x000000A5`.
+   *Expected Response*: `R 0xA5`.
 6. **Confirm `LSR` Cleared**:
    ```text
    A 10000005
-   R
+   R 1
    ```
    *Expected*: Bit 0 returned to `0` because reading `RBR` pops the FIFO.
 
