@@ -21,18 +21,18 @@ module wally_soc_fpga_top #(
   input  logic                clk,              // 100 MHz on-board oscillator (Pin W5)
   input  logic                reset_btn,        // Pushbutton btnC (Pin U18 - Active High)
 
-  // 2. Dual-Protocol Hardware Debugger Pins
+  // 2. Dual-Protocol Hardware Debugger Pins (On-Board Micro-USB B18/A18)
   input  logic                dbg_sel,          // Slide Switch SW0 (Pin V17: 0=UART, 1=FT1248)
-  input  logic                uart_rx,          // PMOD JA Pin 1 (Pin J1: from host PC)
-  output logic                uart_tx,          // PMOD JA Pin 2 (Pin L2: to host PC)
+  input  logic                uart_rx,          // USB-UART RX (Pin B18: from host PC)
+  output logic                uart_tx,          // USB-UART TX (Pin A18: to host PC)
   output logic                ft1248_clk,       // PMOD JB Pin 1 (Pin A14: SCLK to FT232H)
   output logic                ft1248_ss_n,      // PMOD JB Pin 2 (Pin A16: SS# to FT232H)
   input  logic                ft1248_miso,      // PMOD JB Pin 3 (Pin B15: MISO / RXF# from FT232H)
   inout  wire [FT_WIDTH-1:0]  ft1248_miosio,    // PMOD JB Pin 4 (Pin B16: MIOSIO Data Bus)
 
-  // 3. Uncore Application 16550 UART (Onboard Micro-USB Port)
-//  input  logic                UARTSin,          // USB-UART RX (Pin B18: PC -> SoC)
-//  output logic                UARTSout,         // USB-UART TX (Pin A18: SoC -> PC)
+  // 3. Uncore Application 16550 UART (Connected to PMOD JA)
+  input  logic                UARTSin,          // PMOD JA Pin 1 (Pin J1: from host PC)
+  output logic                UARTSout,         // PMOD JA Pin 2 (Pin L2: to host PC)
 
   // 4. Status LEDs
   output logic                led_core_halted,  // LED 0 (Pin U16: Lit when CPU is halted)
@@ -45,8 +45,6 @@ module wally_soc_fpga_top #(
   // -------------------------------------------------------------------------
   wire clk_soc;
   wire mmcm_locked;
-  logic                UARTSin = 1'b1;   // USB-UART RX (Pin B18: PC -> SoC, idle high)
-  logic                UARTSout;         // USB-UART TX (Pin A18: SoC -> PC)
 
 `ifdef SYNTHESIS
   wire clk_soc_unbuf;
