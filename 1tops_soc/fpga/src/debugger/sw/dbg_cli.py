@@ -150,6 +150,23 @@ class MockInterface(BaseProtocolInterface):
             self.last_resp = f"]C 0x{halt_status:02x}{self.gpo:02x}0000\n]"
         elif c == 'M' or c == 'V' or c == 'P':
             self.last_resp = f"]{c} 0x00000000\n]"
+        elif c == 'B':
+            if len(parts) > 1:
+                p = int(parts[1], 16)
+                if (p >> 24) == 0x01:
+                    self.uart_div = p & 0xFFFF
+                elif (p >> 24) == 0x02:
+                    self.ft_div = p & 0xFF
+                elif (p >> 24) == 0x03:
+                    self.uart_div = (p >> 8) & 0xFFFF
+                    self.ft_div = p & 0xFF
+                else:
+                    self.uart_div = p & 0xFFFF
+            self.last_resp = f"]B 0x00{getattr(self, 'ft_div', 4):02x}{getattr(self, 'uart_div', 868):04x}\n]"
+        elif c == 'D':
+            if len(parts) > 1:
+                self.ft_div = int(parts[1], 16) & 0xFF
+            self.last_resp = f"]D 0x{getattr(self, 'ft_div', 4):02x}\n]"
         else:
             self.last_resp = "]?\n]"
 
@@ -250,6 +267,36 @@ class DebuggerClient:
         self.read32(0x30000008)  # Multiplier Product
         self.read32(0x3000000C)  # Config / Status
 
+    def get_dividers(self):
+        """Queries current hardware UART and FT1248 clock dividers ('B')"""
+        resp = self.send_cmd("B")
+        print(f"[*] Raw Dividers Response: {resp}")
+        try:
+            tokens = resp.strip().split()
+            hex_str = [t for t in tokens if t.startswith("0x")][0]
+            val = int(hex_str, 16)
+            ft_div = (val >> 16) & 0xFF
+            uart_div = val & 0xFFFF
+            print(f"    -> UART Clock Divider  : 0x{uart_div:04x} ({uart_div} clock cycles/bit)")
+            print(f"    -> FT1248 Clock Divider: 0x{ft_div:02x} ({ft_div})")
+        except Exception:
+            pass
+        return resp
+
+    def set_uart_divider(self, div_val: int):
+        """Sets internal UART baud rate clock divider (16-bit) via 'B <hex>'"""
+        print(f"[*] Setting UART Clock Divider to {div_val} (0x{div_val:04x})...")
+        resp = self.send_cmd(f"B {div_val:04x}")
+        print(f"    Response: {resp}")
+        return resp
+
+    def set_ft_divider(self, div_val: int):
+        """Sets internal FT1248 clock divider (8-bit) via 'D <hex>'"""
+        print(f"[*] Setting FT1248 Clock Divider to {div_val} (0x{div_val:02x})...")
+        resp = self.send_cmd(f"D {div_val:02x}")
+        print(f"    Response: {resp}")
+        return resp
+
     def dump_memory(self, start_addr: int, count: int = 16):
         """Dumps consecutive words from target memory"""
         print(f"\n=== Memory Dump: 0x{start_addr:08x} ({count} words) ===")
@@ -303,6 +350,13 @@ Hardware Pin Protocol Selection Note:
     p_dump.add_argument("-n", "--count", type=int, default=8, help="Number of 32-bit words to dump")
 
     subparsers.add_parser("read_accel", help="Read 1TOPS accelerator registers")
+    subparsers.add_parser("get_dividers", help="Read current UART and FT1248 clock dividers")
+
+    p_uart_div = subparsers.add_parser("set_uart_div", help="Set UART baud rate clock divider (16-bit)")
+    p_uart_div.add_argument("divider", type=lambda x: int(x, 0), help="Clock cycles per bit (e.g. 868, 434, 109)")
+
+    p_ft_div = subparsers.add_parser("set_ft_div", help="Set FT1248 clock divider (8-bit)")
+    p_ft_div.add_argument("divider", type=lambda x: int(x, 0), help="Divider value (e.g. 4 for 10MHz, 1 for 25MHz)")
 
     args = parser.parse_args()
 
@@ -355,6 +409,12 @@ Hardware Pin Protocol Selection Note:
             client.dump_memory(args.address, args.count)
         elif args.command == "read_accel":
             client.read_accelerator()
+        elif args.command == "get_dividers":
+            client.get_dividers()
+        elif args.command == "set_uart_div":
+            client.set_uart_divider(args.divider)
+        elif args.command == "set_ft_div":
+            client.set_ft_divider(args.divider)
     finally:
         iface.close()
 

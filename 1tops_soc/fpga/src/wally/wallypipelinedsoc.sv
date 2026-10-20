@@ -29,7 +29,7 @@
 
 module wallypipelinedsoc import cvw::*; #(
   parameter cvw_t P,
-  parameter CLK_FREQ    = 100_000_000,
+  parameter CLK_FREQ    = 50_000_000,
   parameter BAUD_RATE   = 115200,
   parameter PROMPT_CHAR = "]",
   parameter FT_WIDTH    = 1,

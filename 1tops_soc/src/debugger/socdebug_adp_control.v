@@ -13,7 +13,9 @@
 `define ADPFSMDESIGN 1
 
 module socdebug_adp_control #(
-  parameter PROMPT_CHAR = "]"
+  parameter PROMPT_CHAR      = "]",
+  parameter [15:0] DEFAULT_UART_DIV = 16'd868,
+  parameter [7:0]  DEFAULT_FT_DIV   = 8'd4
 )(  
   // AHB-lite interface
   input  wire        HCLK,
@@ -48,7 +50,11 @@ module socdebug_adp_control #(
   output wire        STDRX_TREADY_o,
   output wire [ 7:0] STDTX_TDATA_o,
   output wire        STDTX_TVALID_o,
-  input  wire        STDTX_TREADY_i
+  input  wire        STDTX_TREADY_i,
+
+  // Reconfigurable Clock Dividers (controlled only via Debugger)
+  output reg  [15:0] uart_clkdiv_o,
+  output reg  [ 7:0] ft_clkdiv_o
 );
 
 wire COM_RXE_i = !COMRX_TVALID_i;
@@ -74,6 +80,8 @@ localparam CMD_R   = 4'b0011;  // Read word, addr++
 localparam CMD_S   = 4'b0100;  // Status/STDIN
 localparam CMD_W   = 4'b0101;  // Write word, addr++
 localparam CMD_X   = 4'b0110;  // eXit
+localparam CMD_B   = 4'b0111;  // Baud rate / Bus clock divider (UART & FT1248)
+localparam CMD_D   = 4'b1101;  // FT1248 clock divider
 `ifndef ADPBASIC
 localparam CMD_F   = 4'b1000;  // Fill (wordocunt) from addr++
 localparam CMD_M   = 4'b1001;  // set read Mask
@@ -103,6 +111,10 @@ case (char8[7:0])
 "w": FNvalid_cmd = CMD_W;
 "X": FNvalid_cmd = CMD_X;
 "x": FNvalid_cmd = CMD_X;
+"B": FNvalid_cmd = CMD_B;
+"b": FNvalid_cmd = CMD_B;
+"D": FNvalid_cmd = CMD_D;
+"d": FNvalid_cmd = CMD_D;
 `ifndef ADPBASIC
 "F": FNvalid_cmd = CMD_F;
 "f": FNvalid_cmd = CMD_F;
@@ -457,6 +469,8 @@ begin
       adp_mask     <= {32{1'b0}};
       adp_sys      <= {8{1'b0}};
 `endif
+      uart_clkdiv_o <= DEFAULT_UART_DIV;
+      ft_clkdiv_o   <= DEFAULT_FT_DIV;
   end else begin // default states
       if (banner) begin adp_bus_data <= BANNERHEX; adp_size     <= 2'b10; end
       adp_state    <= adp_state; // default to hold current state
@@ -576,6 +590,53 @@ begin
            begin adp_size <= FNparam2size(adp_param[34:33]); adp_bus_data <= adp_param[31:0]; ADP_BUSWRITEINC_next; adp_state <= ADP_WRITE; end
          else if (FNvalid_cmd(adp_cmd) == CMD_X)
            begin com_tx_byte <= 8'h0a; com_tx_req <= 1'b1; adp_state <= ADP_EXIT; end
+         else if (FNvalid_cmd(adp_cmd) == CMD_B) begin
+           if (|adp_param[34:32] == 1'b0) begin
+             adp_bus_data <= {8'h00, ft_clkdiv_o, uart_clkdiv_o};
+             adp_size     <= 2'b10;
+             ADP_txchar_next("B");
+             adp_state    <= ADP_ECHOBUS;
+           end else if (adp_param[31:24] == 8'h01) begin
+             uart_clkdiv_o <= adp_param[15:0];
+             adp_bus_data  <= {8'h00, ft_clkdiv_o, adp_param[15:0]};
+             adp_size      <= 2'b10;
+             ADP_txchar_next("B");
+             adp_state     <= ADP_ECHOBUS;
+           end else if (adp_param[31:24] == 8'h02) begin
+             ft_clkdiv_o  <= adp_param[7:0];
+             adp_bus_data <= {8'h00, adp_param[7:0], uart_clkdiv_o};
+             adp_size     <= 2'b10;
+             ADP_txchar_next("B");
+             adp_state    <= ADP_ECHOBUS;
+           end else if (adp_param[31:24] == 8'h03) begin
+             uart_clkdiv_o <= adp_param[23:8];
+             ft_clkdiv_o   <= adp_param[7:0];
+             adp_bus_data  <= {8'h00, adp_param[7:0], adp_param[23:8]};
+             adp_size      <= 2'b10;
+             ADP_txchar_next("B");
+             adp_state     <= ADP_ECHOBUS;
+           end else begin
+             uart_clkdiv_o <= adp_param[15:0];
+             adp_bus_data  <= {8'h00, ft_clkdiv_o, adp_param[15:0]};
+             adp_size      <= 2'b10;
+             ADP_txchar_next("B");
+             adp_state     <= ADP_ECHOBUS;
+           end
+         end
+         else if (FNvalid_cmd(adp_cmd) == CMD_D) begin
+           if (|adp_param[34:32] == 1'b0) begin
+             adp_bus_data <= {24'h000000, ft_clkdiv_o};
+             adp_size     <= 2'b00;
+             ADP_txchar_next("D");
+             adp_state    <= ADP_ECHOBUS;
+           end else begin
+             ft_clkdiv_o  <= adp_param[7:0];
+             adp_bus_data <= {24'h000000, adp_param[7:0]};
+             adp_size     <= 2'b00;
+             ADP_txchar_next("D");
+             adp_state    <= ADP_ECHOBUS;
+           end
+         end
 `ifndef ADPBASIC
          else if (FNvalid_cmd(adp_cmd) == CMD_U) begin
              if (FNcount_down_zero_next(adp_param[31:0])) begin adp_state <= ADP_ECHOCMD; end else begin adp_state <= ADP_UCTRL; end// non-zero count

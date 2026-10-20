@@ -143,8 +143,8 @@ module socdebug_ft1248_control #(
       ft_clken    <= 1'b0;
       end
     else begin
-      ft_clken    <= (ft_clkcnt_r == ft_clkdiv);
-      ft_clkcnt_r <= (ft_clkcnt_r == ft_clkdiv) ? 8'h00 : ((ft_clkcnt_r + 8'h01) & 8'hff);
+      ft_clken    <= (ft_clkcnt_r >= ft_clkdiv);
+      ft_clkcnt_r <= (ft_clkcnt_r >= ft_clkdiv) ? 8'h00 : ((ft_clkcnt_r + 8'h01) & 8'hff);
       end
   end
 

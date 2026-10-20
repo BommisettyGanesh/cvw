@@ -450,6 +450,8 @@ module tb_debugger;
     // PROTOCOL DRIVERS: UART & FT1248
     //=========================================================================
 
+    time current_bit_period = BIT_PERIOD;
+
     //-------------------------------------------------------------------------
     // UART Drivers
     //-------------------------------------------------------------------------
@@ -457,14 +459,14 @@ module tb_debugger;
         integer i;
         begin
             uart_rx = 1'b0; // Start bit
-            #(BIT_PERIOD);
+            #(current_bit_period);
             for (i = 0; i < 8; i = i + 1) begin
                 uart_rx = data[i];
-                #(BIT_PERIOD);
+                #(current_bit_period);
             end
             uart_rx = 1'b1; // Stop bit
-            #(BIT_PERIOD);
-            #(BIT_PERIOD / 2);
+            #(current_bit_period);
+            #(current_bit_period / 2);
         end
     endtask
 
@@ -484,17 +486,17 @@ module tb_debugger;
 
     always begin
         @(negedge uart_tx);
-        #(BIT_PERIOD / 2);
+        #(current_bit_period / 2);
         if (!uart_tx) begin
-            #(BIT_PERIOD);
-            rx_char[0] = uart_tx; #(BIT_PERIOD);
-            rx_char[1] = uart_tx; #(BIT_PERIOD);
-            rx_char[2] = uart_tx; #(BIT_PERIOD);
-            rx_char[3] = uart_tx; #(BIT_PERIOD);
-            rx_char[4] = uart_tx; #(BIT_PERIOD);
-            rx_char[5] = uart_tx; #(BIT_PERIOD);
-            rx_char[6] = uart_tx; #(BIT_PERIOD);
-            rx_char[7] = uart_tx; #(BIT_PERIOD);
+            #(current_bit_period);
+            rx_char[0] = uart_tx; #(current_bit_period);
+            rx_char[1] = uart_tx; #(current_bit_period);
+            rx_char[2] = uart_tx; #(current_bit_period);
+            rx_char[3] = uart_tx; #(current_bit_period);
+            rx_char[4] = uart_tx; #(current_bit_period);
+            rx_char[5] = uart_tx; #(current_bit_period);
+            rx_char[6] = uart_tx; #(current_bit_period);
+            rx_char[7] = uart_tx; #(current_bit_period);
             if (rx_char == 8'h0A || rx_char == 8'h0D) begin
                 if (rx_line.len() > 0) begin
                     last_completed_line = rx_line;
@@ -560,7 +562,8 @@ module tb_debugger;
     task wait_for_prompt;
         begin
             wait (dut_debugger.u_socdebug_ahb.u_adp_control.adp_state == 6'd15);
-            #(BIT_PERIOD * 4);
+            wait (dut_debugger.u_uart.tx_state == 2'd0 && !dut_debugger.u_uart.s_axis_tvalid);
+            #(current_bit_period * 4);
         end
     endtask
 
@@ -921,6 +924,115 @@ module tb_debugger;
             $display("    [FAIL] Core resume failed! stall = %b", core_stall_effective);
             error_count = error_count + 1;
         end
+
+        //=====================================================================
+        // PART 5: RECONFIGURABLE CLOCK DIVIDERS (UART & FT1248 via 'B' & 'D')
+        //=====================================================================
+        $display("\n===============================================================================");
+        $display("   TEST SUITE PART 5: RECONFIGURABLE CLOCK DIVIDERS                            ");
+        $display("===============================================================================");
+
+        // 5.1 Read Initial Default Dividers via 'B'
+        $display("\n>>> [DIVIDER] 5.1: Querying Default Clock Dividers via 'B' <<<");
+        send_uart_string("B\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_uart_clkdiv === 16'd20 && dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] Default dividers verified: UART_DIV=%0d, FT_DIV=%0d",
+                     dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Default dividers mismatch: UART_DIV=%0d (exp 20), FT_DIV=%0d (exp 2)",
+                     dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.2 Read Initial FT1248 Divider via 'D'
+        $display("\n>>> [DIVIDER] 5.2: Querying FT1248 Divider via 'D' <<<");
+        send_uart_string("D\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] FT1248 divider verified via 'D': %0d", dut_debugger.dbg_ft_clkdiv);
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] FT1248 divider query mismatch: %0d (exp 2)", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.3 Reconfigure FT1248 Divider via 'D 08'
+        $display("\n>>> [DIVIDER] 5.3: Reconfiguring FT1248 Divider to 8 via 'D 08' <<<");
+        send_uart_string("D 08\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd8) begin
+            $display("    [PASS] FT1248 divider successfully updated to 8.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] FT1248 divider update failed: %0d (exp 8)", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.4 Reconfigure UART Divider to 40 cycles via 'B 0028'
+        $display("\n>>> [DIVIDER] 5.4: Reconfiguring UART Divider to 40 cycles via 'B 0028' <<<");
+        send_uart_string("B 0028\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_uart_clkdiv === 16'h0028) begin
+            $display("    [PASS] UART divider successfully updated to 40.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] UART divider update failed: %0d (exp 40)", dut_debugger.dbg_uart_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // Adjust testbench bit timing to 800ns (40 cycles)
+        current_bit_period = BIT_PERIOD * 2;
+        #(current_bit_period * 2);
+
+        // 5.5 Verify live UART communication at reconfigured baud rate (40 cycles)
+        $display("\n>>> [DIVIDER] 5.5: Verifying live UART communication at 40 cycles / bit <<<");
+        send_uart_string("B\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_uart_clkdiv === 16'h0028) begin
+            $display("    [PASS] Bidirectional UART communication successful at reconfigured baud rate!");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Communication failed at reconfigured baud rate.");
+            error_count = error_count + 1;
+        end
+
+        // 5.6 Restore original UART baud rate (20 cycles) and FT1248 (2) via 'B 03001402'
+        $display("\n>>> [DIVIDER] 5.6: Restoring both dividers via 'B 03001402' at 40 cycles <<<");
+        send_uart_string("B 03001402\n");
+        wait_for_prompt();
+        current_bit_period = BIT_PERIOD;
+        #(current_bit_period * 2);
+        if (dut_debugger.dbg_uart_clkdiv === 16'd20 && dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] Both dividers restored successfully: UART_DIV=%0d, FT_DIV=%0d",
+                     dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Simultaneous divider restore failed: UART_DIV=%0d, FT_DIV=%0d",
+                     dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.7 Verify FT1248 Interface can also query and update dividers
+        $display("\n>>> [DIVIDER] 5.7: Testing Divider Reconfiguration over FT1248 Interface <<<");
+        dbg_sel = 1'b1;
+        #(current_bit_period * 2);
+        send_ft1248_string("D 04\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd4) begin
+            $display("    [PASS] FT1248 divider updated to 4 over FT1248 bus.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] FT1248 divider update over FT1248 failed: %0d", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // Restore FT divider back to 2 over FT1248
+        send_ft1248_string("D 02\n");
+        wait_for_prompt();
+        dbg_sel = 1'b0;
+        #(current_bit_period * 2);
 
         //---------------------------------------------------------------------
         // FINAL TEST SUMMARY

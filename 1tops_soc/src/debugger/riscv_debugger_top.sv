@@ -63,6 +63,14 @@ module riscv_debugger_top #(
 );
 
     //-------------------------------------------------------------------------
+    // Internal Reconfigurable Clock Dividers (Controlled only via Debugger)
+    //-------------------------------------------------------------------------
+    localparam [15:0] DEFAULT_UART_DIV = CLK_FREQ / BAUD_RATE;
+
+    wire [15:0] dbg_uart_clkdiv;
+    wire [ 7:0] dbg_ft_clkdiv;
+
+    //-------------------------------------------------------------------------
     // 1. Dedicated Debug UART Transceiver Streams
     //-------------------------------------------------------------------------
     wire [7:0] uart_adp_rx_data;
@@ -77,9 +85,10 @@ module riscv_debugger_top #(
         .CLK_FREQ  (CLK_FREQ),
         .BAUD_RATE (BAUD_RATE)
     ) u_uart (
-        .clk           (clk),
-        .rst_n         (rst_n),
-        .uart_rx       (uart_rx),
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .clks_per_bit_i (dbg_uart_clkdiv),
+        .uart_rx        (uart_rx),
         .uart_tx       (uart_tx),
         .m_axis_tdata  (uart_adp_rx_data),
         .m_axis_tvalid (uart_adp_rx_valid),
@@ -118,7 +127,7 @@ module riscv_debugger_top #(
     ) u_ft1248 (
         .clk         (clk),
         .resetn      (rst_n),
-        .ft_clkdiv   (FT_CLKDIV),
+        .ft_clkdiv   (dbg_ft_clkdiv),
         .ft_clk_o    (ft1248_clk),
         .ft_ssn_o    (ft1248_ss_n),
         .ft_miso_i   (ft1248_miso),
@@ -175,7 +184,9 @@ module riscv_debugger_top #(
     // 4. Instantiate SoCDebug AHB Master Controller
     //-------------------------------------------------------------------------
     socdebug_ahb #(
-        .PROMPT_CHAR (PROMPT_CHAR)
+        .PROMPT_CHAR      (PROMPT_CHAR),
+        .DEFAULT_UART_DIV (DEFAULT_UART_DIV),
+        .DEFAULT_FT_DIV   (FT_CLKDIV)
     ) u_socdebug_ahb (
         .HCLK           (clk),
         .HRESETn        (rst_n),
@@ -217,7 +228,11 @@ module riscv_debugger_top #(
         .core_step_done_i (core_step_done_i),
 
         .GPO8_o           (GPO8),
-        .GPI8_i           (GPI8)
+        .GPI8_i           (GPI8),
+
+        // Reconfigurable Clock Dividers
+        .uart_clkdiv_o    (dbg_uart_clkdiv),
+        .ft_clkdiv_o      (dbg_ft_clkdiv)
     );
 
 endmodule

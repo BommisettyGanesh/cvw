@@ -71,7 +71,39 @@ The debugger subsystem features a physical hardware input pad, **`dbg_sel`** (Sl
 
 ---
 
-## 3. Bulk Memory & High-Speed Operations
+## 3. Reconfigurable Clock Divider Commands (`B` & `D`)
+
+The hardware debugger incorporates internal configuration registers for both the **UART baud rate divider** (16-bit) and **FT1248 clock divider** (8-bit). These registers are completely isolated from the RISC-V core and can **only be read and written by the debugger**.
+
+* **Power-On Reset Defaults**:
+  * **ASIC**: UART = 868 (`0x0364` for 100 MHz / 115200 baud), FT1248 = 4 (`0x04` for 10 MHz).
+  * **FPGA**: UART = 434 (`0x01B2` for 50 MHz / 115200 baud), FT1248 = 4 (`0x04` for 5 MHz).
+* **Glitch-Free Guarantee**: The UART divider register only updates when both RX and TX engines are completely idle (`rx_state == RX_IDLE && tx_state == TX_IDLE`), guaranteeing that command echo/response bytes and framing are never corrupted mid-flight.
+
+| Command | Syntax | Description | Example & Response |
+| :--- | :--- | :--- | :--- |
+| **Query Dividers** | `B` | Queries both UART (low 16 bits) and FT1248 (middle 8 bits) dividers. Format: `0x00<FT_DIV8><UART_DIV16>`. | `] B`<br>`B 0x00040364` (ASIC default)<br>`B 0x000401B2` (FPGA default) |
+| **Set UART Baud Divider** | `B <hex16>` | Configures the UART clock divider (clocks per bit). | `] B 006d`<br>`B 0x0004006d` (sets 921,600 baud at 100MHz) |
+| **Set UART Divider Explicitly** | `B 01<hex16>` | Subcommand `01`: Explicitly sets the 16-bit UART clock divider. | `] B 010364`<br>`B 0x00040364` |
+| **Set FT1248 Divider Explicitly** | `B 02<hex8>` | Subcommand `02`: Explicitly sets the 8-bit FT1248 clock divider. | `] B 020008`<br>`B 0x00080364` |
+| **Set Both Dividers** | `B 03<uart16><ft8>` | Subcommand `03`: Simultaneously sets UART divider (middle 16 bits) and FT1248 divider (low 8 bits). | `] B 03006d01`<br>`B 0x0001006d` (UART 921.6k, FT1248 25MHz) |
+| **Query FT1248 Divider** | `D` | Queries only the 8-bit FT1248 clock divider. | `] D`<br>`D 0x04` |
+| **Set FT1248 Divider** | `D <hex8>` | Sets the 8-bit FT1248 clock divider. | `] D 01`<br>`D 0x01` (sets 25 MHz on 100MHz ASIC) |
+
+### Common Baud Rate Divider Table
+
+| Desired Baud Rate | 100 MHz ASIC Divider (Dec / Hex) | 50 MHz FPGA Divider (Dec / Hex) |
+| :--- | :--- | :--- |
+| **115,200 Baud** *(Default)* | `868` (`0x0364`) | `434` (`0x01B2`) |
+| **230,400 Baud** | `434` (`0x01B2`) | `217` (`0x00D9`) |
+| **460,800 Baud** | `217` (`0x00D9`) | `109` (`0x006D`) |
+| **921,600 Baud** | `109` (`0x006D`) | `54` (`0x0036`) |
+| **1,500,000 Baud** | `67` (`0x0043`) | `33` (`0x0021`) |
+| **3,000,000 Baud** | `33` (`0x0021`) | `17` (`0x0011`) |
+
+---
+
+## 4. Bulk Memory & High-Speed Operations
 
 | Command | Syntax | Description | Example & Response |
 | :--- | :--- | :--- | :--- |

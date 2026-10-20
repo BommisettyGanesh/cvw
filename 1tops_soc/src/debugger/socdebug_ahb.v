@@ -6,7 +6,9 @@
 `timescale 1ns / 1ps
 
 module socdebug_ahb #(
-    parameter         PROMPT_CHAR   = "]"
+    parameter         PROMPT_CHAR      = "]",
+    parameter [15:0]  DEFAULT_UART_DIV = 16'd868,
+    parameter [ 7:0]  DEFAULT_FT_DIV   = 8'd4
 )(  
     // AHB-lite Master Interface
     input  wire                     HCLK,
@@ -52,7 +54,11 @@ module socdebug_ahb #(
     
     // Raw GPIO interface
     output wire               [7:0] GPO8_o,
-    input  wire               [7:0] GPI8_i
+    input  wire               [7:0] GPI8_i,
+
+    // Dynamic Clock Dividers (controlled only via Debugger)
+    output wire              [15:0] uart_clkdiv_o,
+    output wire              [ 7:0] ft_clkdiv_o
 );
 
     wire [7:0] gpo8_int;
@@ -79,7 +85,9 @@ module socdebug_ahb #(
 
     // Instantiation of ADP AHB Controller
     socdebug_adp_control #(
-        .PROMPT_CHAR (PROMPT_CHAR)
+        .PROMPT_CHAR      (PROMPT_CHAR),
+        .DEFAULT_UART_DIV (DEFAULT_UART_DIV),
+        .DEFAULT_FT_DIV   (DEFAULT_FT_DIV)
     ) u_adp_control (
         // AHB Interface
         .HCLK           (HCLK),
@@ -114,7 +122,11 @@ module socdebug_ahb #(
         .COMRX_TREADY_o (COMRX_TREADY_o),
         .COMTX_TVALID_o (COMTX_TVALID_o),
         .COMTX_TDATA_o  (COMTX_TDATA_o ),
-        .COMTX_TREADY_i (COMTX_TREADY_i)
+        .COMTX_TREADY_i (COMTX_TREADY_i),
+
+        // Clock Dividers
+        .uart_clkdiv_o  (uart_clkdiv_o),
+        .ft_clkdiv_o    (ft_clkdiv_o)
     );
 
 endmodule
