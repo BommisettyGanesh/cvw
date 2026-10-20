@@ -29,20 +29,21 @@ The debugger subsystem features a physical hardware input pad, **`dbg_sel`** (Sl
 
 ## 1. Core Execution & System Control Commands
 
-### Startup & Mode Switching
-- **Boot Banner**: On power-on or board reset (`btnC`), the controller sends ` 0x50c1ab04\r\n` and initializes into terminal passthrough mode (`STD_IOCHK`).
-- **Enter Command Mode (`<ESC>` / `0x1B`)**: To enter ADP command mode, send `<ESC>` (`\x1b` — in HTerm, set input to **HEX** and send `1B`). The board replies with the prompt `]` and latches LED 15 ON.
-- **Exit Command Mode (`X`)**: Type `X` to leave ADP command mode and return to terminal passthrough.
-*(Note: To auto-prompt `]` on boot without requiring ESC, see lines 137 & 737 in `socdebug_adp_control.v`).*
+### Startup & Direct Auto-Entry
+- **Direct Auto-Prompt on Boot**: On power-on or board reset (`btnC`), the controller sends ` 0x50c1ab04\r\n`, auto-enters ADP command mode, outputs the prompt character `]`, and latches LED 15 ON. **No escape character (`0x1B`) is required!**
+- **Exit Command Mode (`X` / `Ctrl+D`)**: Type `X` (or send `0x04`) to leave ADP monitor mode and switch to terminal/STDIO passthrough if desired.
+- **Re-enter Command Mode (`<ESC>` / `0x1B`)**: If in passthrough mode, send `<ESC>` (`\x1b`) to re-enter ADP command mode.
 
 | Command | Syntax | Description | Example & Response |
 | :--- | :--- | :--- | :--- |
 | **Halt Core** | `C 0202` | Asserts bit 1 of GPO8 (`core_halt_o = 1` -> `ExternalStall = 1`). Stalls all 5 pipeline stages. LED 0 turns ON. | `] C 0202`<br>`C 0x00020202` |
 | **Resume Core** | `C 0102` | Clears bit 1 of GPO8 (`core_halt_o = 0` -> `ExternalStall = 0`). Resumes pipeline execution. LED 0 turns OFF. | `] C 0102`<br>`C 0x00000200` |
+| **Instruction Step** | `C 0204`<br>`C 0104` | Asserts bit 2 of GPO8 (`step_req = 1`, mode = 0). Releases stall until **1 instruction commits** in pipeline, then auto-freezes core. Cleared via `C 0104`. | `] C 0204`<br>`C 0x00060204`<br>`] C 0104` |
+| **Clock-Cycle Step** | `C 020c`<br>`C 010c` | Asserts bits 2 & 3 of GPO8 (`step_req = 1`, mode = 1). Releases stall for **exactly 1 clock cycle**, then auto-freezes core. Cleared via `C 010c`. | `] C 020c`<br>`C 0x000e020c`<br>`] C 010c` |
 | **Assert Reset** | `C 0201` | Sets bit 0 of GPO8 (`core_reset_o = 1`). Holds CPU in reset. | `] C 0201`<br>`C 0x00010201` |
 | **Release Reset** | `C 0101` | Clears bit 0 of GPO8 (`core_reset_o = 0`). Releases CPU reset. | `] C 0101`<br>`C 0x00000200` |
 | **Overwrite GPO8** | `C 03<val8>` | Overwrites entire 8-bit GPO8 with `<val8>`. | `] C 0300`<br>`C 0x00000200` |
-| **Query Status** | `C` | Reads current GPO8 outputs and GPI8 inputs without modifying them. | `] C`<br>`C 0x01000000` |
+| **Query Status** | `C` | Reads current GPO8 outputs and GPI8 inputs without modifying them. Bit 0 = Halted, Bit 1 = Step Busy, Bit 2 = Step Done. | `] C`<br>`C 0x01000000` |
 | **Enter ADP Mode** | `<ESC>` (`\x1b`) | Wakes up ADP command mode from idle/passthrough. | Send `1B` (HEX) -> displays `]` |
 | **Exit ADP Mode** | `X` | Exits ADP monitor mode and switches serial channel to terminal/STDIO bypass. | `] X` |
 

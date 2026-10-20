@@ -42,9 +42,13 @@ module socdebug_ahb #(
     output wire                     STDRX_TREADY_o,
     
     // Core Debug & Control Signals
-    output wire                     core_halt_o,     // Connected to ExternalStall of RISC-V Core
-    output wire                     core_reset_o,    // Core/System Reset request
-    input  wire                     core_halted_i,   // Core Halted Status feedback
+    output wire                     core_halt_o,      // Connected to ExternalStall of RISC-V Core
+    output wire                     core_reset_o,     // Core/System Reset request
+    input  wire                     core_halted_i,    // Core Halted Status feedback
+    output wire                     core_step_o,      // Core Step Request (GPO8[2])
+    output wire                     core_step_mode_o, // Core Step Mode (GPO8[3]: 0=Instr, 1=Cycle)
+    input  wire                     core_step_busy_i, // Core Step in progress (GPI8[1])
+    input  wire                     core_step_done_i, // Core Step completed (GPI8[2])
     
     // Raw GPIO interface
     output wire               [7:0] GPO8_o,
@@ -57,15 +61,21 @@ module socdebug_ahb #(
     // Bit mapping for GPO8 (written via ADP command 'C'):
     // GPO8[0]: Reset request
     // GPO8[1]: Core halt request (ExternalStall)
-    // GPO8[7:2]: General purpose / future expansion
-    assign GPO8_o       = gpo8_int;
-    assign core_reset_o = gpo8_int[0];
-    assign core_halt_o  = gpo8_int[1];
+    // GPO8[2]: Core single-step trigger (rising edge initiated)
+    // GPO8[3]: Core single-step mode (0 = Instruction, 1 = Clock Cycle)
+    // GPO8[7:4]: General purpose / future expansion
+    assign GPO8_o           = gpo8_int;
+    assign core_reset_o     = gpo8_int[0];
+    assign core_halt_o      = gpo8_int[1];
+    assign core_step_o      = gpo8_int[2];
+    assign core_step_mode_o = gpo8_int[3];
 
     // Bit mapping for GPI8 (read via ADP command 'C'):
     // GPI8[0]: Core halted feedback status
-    // GPI8[7:1]: User inputs / GPI8_i[7:1]
-    assign gpi8_int = {GPI8_i[7:1], core_halted_i};
+    // GPI8[1]: Core step busy status (1 = stepping in flight, 0 = idle/halted)
+    // GPI8[2]: Core step done status (1-cycle pulse upon completion)
+    // GPI8[7:3]: User inputs / GPI8_i[7:3]
+    assign gpi8_int = {GPI8_i[7:3], (core_step_done_i | GPI8_i[2]), (core_step_busy_i | GPI8_i[1]), (core_halted_i | GPI8_i[0])};
 
     // Instantiation of ADP AHB Controller
     socdebug_adp_control #(

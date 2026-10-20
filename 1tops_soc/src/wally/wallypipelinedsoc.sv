@@ -123,6 +123,13 @@ module wallypipelinedsoc import cvw::*; #(
   logic                       dbg_HRESP;
   logic                       dbg_core_halt;
   logic                       dbg_core_reset;
+  logic                       dbg_core_step;
+  logic                       dbg_core_step_mode;
+  logic                       dbg_step_busy;
+  logic                       dbg_step_done;
+  logic                       core_stall_effective;
+  logic                       core_instr_retired;
+  logic                       dbg_core_halt_status;
 
   // Zero-extend debugger address/data to match physical bus width (P.PA_BITS & P.AHBW)
   logic [P.PA_BITS-1:0]       dbg_HADDR_ext;
@@ -146,34 +153,56 @@ module wallypipelinedsoc import cvw::*; #(
     .FT_WIDTH    (FT_WIDTH),
     .FT_CLKDIV   (FT_CLKDIV)
   ) u_debugger (
-    .clk             (clk),
-    .rst_n           (~reset),
-    .dbg_sel         (dbg_sel),
-    .uart_rx         (uart_rx),
-    .uart_tx         (uart_tx),
-    .ft1248_clk      (ft1248_clk),
-    .ft1248_ss_n     (ft1248_ss_n),
-    .ft1248_miso     (ft1248_miso),
-    .ft1248_miosio   (ft1248_miosio),
-    .core_halt_o     (dbg_core_halt),
-    .core_reset_o    (dbg_core_reset),
-    .core_halted_i   (dbg_core_halt),
-    .DEBUG_HADDR     (dbg_HADDR),
-    .DEBUG_HBURST    (dbg_HBURST),
-    .DEBUG_HMASTLOCK (dbg_HMASTLOCK),
-    .DEBUG_HPROT     (dbg_HPROT),
-    .DEBUG_HSIZE     (dbg_HSIZE),
-    .DEBUG_HTRANS    (dbg_HTRANS),
-    .DEBUG_HWDATA    (dbg_HWDATA),
-    .DEBUG_HWRITE    (dbg_HWRITE),
-    .DEBUG_HRDATA    (dbg_HRDATA),
-    .DEBUG_HREADY    (dbg_HREADY),
-    .DEBUG_HRESP     (dbg_HRESP),
-    .GPO8            (),
-    .GPI8            ({7'b0, dbg_core_halt})
+    .clk              (clk),
+    .rst_n            (~reset),
+    .dbg_sel          (dbg_sel),
+    .uart_rx          (uart_rx),
+    .uart_tx          (uart_tx),
+    .ft1248_clk       (ft1248_clk),
+    .ft1248_ss_n      (ft1248_ss_n),
+    .ft1248_miso      (ft1248_miso),
+    .ft1248_miosio    (ft1248_miosio),
+    .core_halt_o      (dbg_core_halt),
+    .core_reset_o     (dbg_core_reset),
+    .core_halted_i    (dbg_core_halt_status),
+    .core_step_o      (dbg_core_step),
+    .core_step_mode_o (dbg_core_step_mode),
+    .core_step_busy_i (dbg_step_busy),
+    .core_step_done_i (dbg_step_done),
+    .DEBUG_HADDR      (dbg_HADDR),
+    .DEBUG_HBURST     (dbg_HBURST),
+    .DEBUG_HMASTLOCK  (dbg_HMASTLOCK),
+    .DEBUG_HPROT      (dbg_HPROT),
+    .DEBUG_HSIZE      (dbg_HSIZE),
+    .DEBUG_HTRANS     (dbg_HTRANS),
+    .DEBUG_HWDATA     (dbg_HWDATA),
+    .DEBUG_HWRITE     (dbg_HWRITE),
+    .DEBUG_HRDATA     (dbg_HRDATA),
+    .DEBUG_HREADY     (dbg_HREADY),
+    .DEBUG_HRESP      (dbg_HRESP),
+    .GPO8             (),
+    .GPI8             ({5'b0, dbg_step_done, dbg_step_busy, dbg_core_halt_status})
   );
 
-  assign core_halted_led = dbg_core_halt;
+  // 1.1 Step Debugging FSM Controller Instance
+  core_step_controller #(
+    .WATCHDOG_LIMIT   (65536)
+  ) u_step_controller (
+    .clk              (clk),
+    .rst_n            (~reset),
+    .halt_req_i       (dbg_core_halt),
+    .step_req_i       (dbg_core_step),
+    .step_mode_i      (dbg_core_step_mode),
+    .instr_retired_i  (core_instr_retired),
+    .core_stall_ext_i (ExternalStall),
+    .core_stall_o     (core_stall_effective),
+    .step_busy_o      (dbg_step_busy),
+    .step_done_o      (dbg_step_done),
+    .step_count_o     ()
+  );
+
+  assign dbg_core_halt_status = core_stall_effective & ~dbg_step_busy;
+  assign core_halted_led      = dbg_core_halt_status;
 
   // 2. Instantiate CPU Core
   wallypipelinedcore #(P) core(
@@ -194,7 +223,8 @@ module wallypipelinedsoc import cvw::*; #(
     .HPROT         (core_HPROT),
     .HTRANS        (core_HTRANS),
     .HMASTLOCK     (core_HMASTLOCK),
-    .ExternalStall (ExternalStall | dbg_core_halt)
+    .ExternalStall (core_stall_effective),
+    .InstrRetired  (core_instr_retired)
   );
 
   // 3. 2-to-1 AHB-Lite Bus Arbiter / Multiplexer
@@ -204,7 +234,7 @@ module wallypipelinedsoc import cvw::*; #(
   ) u_ahb_mux (
     .HCLK         (clk),
     .HRESETn      (~reset),
-    .core_halt    (dbg_core_halt),
+    .core_halt    (dbg_core_halt_status),
 
     // Master 0: CPU Core
     .M0_HADDR     (core_HADDR),
@@ -255,7 +285,7 @@ module wallypipelinedsoc import cvw::*; #(
     endcase
   end
 
-  assign HWSTRB = (dbg_core_halt) ? dbg_HWSTRB : core_HWSTRB;
+  assign HWSTRB = (dbg_core_halt_status) ? dbg_HWSTRB : core_HWSTRB;
 
   // instantiate uncore if a bus interface exists
   if (P.BUS_SUPPORTED) begin : uncoregen // Hack to work around Verilator bug https://github.com/verilator/verilator/issues/4769

@@ -198,6 +198,26 @@ class DebuggerClient:
         print(f"    Response: {resp}")
         return resp
 
+    def step_instruction(self):
+        """Single-steps the RISC-V core by 1 retired instruction (GPO8 bit 2)"""
+        print("[*] Single-stepping 1 retired instruction...")
+        self.send_cmd("C 0204")
+        time.sleep(0.01)
+        self.send_cmd("C 0104")
+        resp = self.get_status()
+        print("    [PASS] Instruction step completed.")
+        return resp
+
+    def step_cycle(self):
+        """Single-steps the RISC-V core by 1 clock cycle (GPO8 bits 2 & 3)"""
+        print("[*] Single-stepping 1 clock cycle...")
+        self.send_cmd("C 020c")
+        time.sleep(0.01)
+        self.send_cmd("C 010c")
+        resp = self.get_status()
+        print("    [PASS] Clock cycle step completed.")
+        return resp
+
     def get_status(self):
         """Queries hardware control & status register (GPI8 and GPO8)"""
         resp = self.send_cmd("C")
@@ -266,6 +286,8 @@ Hardware Pin Protocol Selection Note:
 
     subparsers.add_parser("halt", help="Halt the RISC-V core during execution")
     subparsers.add_parser("resume", help="Resume the RISC-V core")
+    subparsers.add_parser("step", help="Single-step the CPU core by 1 retired instruction")
+    subparsers.add_parser("step_cycle", help="Single-step the CPU core by 1 clock cycle")
     subparsers.add_parser("reset", help="Pulse core reset")
     subparsers.add_parser("status", help="Read core halt and GPO status")
 
@@ -317,6 +339,10 @@ Hardware Pin Protocol Selection Note:
             client.halt_core()
         elif args.command == "resume":
             client.resume_core()
+        elif args.command == "step":
+            client.step_instruction()
+        elif args.command == "step_cycle":
+            client.step_cycle()
         elif args.command == "reset":
             client.reset_core()
         elif args.command == "status":

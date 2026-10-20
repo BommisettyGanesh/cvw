@@ -137,15 +137,39 @@ module tb_debugger;
         forever #10 clk = ~clk;
     end
 
-    // Realistic RISC-V Core Hazard Unit Model
+    // Realistic RISC-V Core Hazard Unit & Step Controller Integration
+    wire        core_step_o;
+    wire        core_step_mode_o;
+    wire        core_step_busy;
+    wire        core_step_done;
+    reg         sim_instr_retired = 1'b0;
+    wire        core_stall_effective;
+    wire [31:0] step_count;
+
+    core_step_controller #(
+        .WATCHDOG_LIMIT(100)
+    ) u_tb_step_ctrl (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .halt_req_i       (core_halt_o),
+        .step_req_i       (core_step_o),
+        .step_mode_i      (core_step_mode_o),
+        .instr_retired_i  (sim_instr_retired),
+        .core_stall_ext_i (1'b0),
+        .core_stall_o     (core_stall_effective),
+        .step_busy_o      (core_step_busy),
+        .step_done_o      (core_step_done),
+        .step_count_o     (step_count)
+    );
+
     reg [1:0] core_halt_pipe;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             core_halt_pipe <= 2'b00;
             core_halted_i  <= 1'b0;
         end else begin
-            core_halt_pipe <= {core_halt_pipe[0], core_halt_o};
-            core_halted_i  <= core_halt_pipe[1];
+            core_halt_pipe <= {core_halt_pipe[0], core_stall_effective};
+            core_halted_i  <= core_halt_pipe[1] & ~core_step_busy;
         end
     end
 
@@ -176,9 +200,13 @@ module tb_debugger;
         .ft1248_miosio   (ft1248_miosio),
 
         // Core Control & Status
-        .core_halt_o     (core_halt_o),
-        .core_reset_o    (core_reset_o),
-        .core_halted_i   (core_halted_i),
+        .core_halt_o      (core_halt_o),
+        .core_reset_o     (core_reset_o),
+        .core_halted_i    (core_halted_i),
+        .core_step_o      (core_step_o),
+        .core_step_mode_o (core_step_mode_o),
+        .core_step_busy_i (core_step_busy),
+        .core_step_done_i (core_step_done),
 
         // AHB Master Port
         .DEBUG_HADDR     (dbg_haddr),
@@ -607,8 +635,10 @@ module tb_debugger;
         $display("\n-------------------------------------------------------------------------------");
         $display("   PART 1: VERIFYING DEBUGGER VIA UART PROTOCOL (dbg_sel = 0)                  ");
         $display("-------------------------------------------------------------------------------");
-        send_uart_byte(8'h1b); // ESC
+        // Auto-enter ADP mode: prompt ']' is emitted directly after banner without needing ESC
         wait_for_prompt();
+        $display("    [PASS] Auto-entered ADP command mode on boot with ']' prompt (no ESC required)!");
+        pass_count = pass_count + 1;
 
         // 1.1 Core Halt & Status
         $display("\n>>> [UART] 1.1: Core Halt & Status Verification <<<");
@@ -808,6 +838,89 @@ module tb_debugger;
         wait (core_halt_o == 1'b0);
         wait (core_halted_i == 1'b0);
         wait_for_prompt();
+
+        //---------------------------------------------------------------------
+        // PART 4: CORE STEP FSM CONTROLLER VERIFICATION
+        //---------------------------------------------------------------------
+        $display("\n-------------------------------------------------------------------------------");
+        $display("   PART 4: CORE STEPPING FSM CONTROLLER VERIFICATION                           ");
+        $display("-------------------------------------------------------------------------------");
+
+        // 4.1 Halt Core
+        $display("\n>>> [STEP] 4.1: Halting Core via UART 'C 0202' <<<");
+        send_uart_string("C 0202\n");
+        wait (core_stall_effective == 1'b1);
+        wait_for_prompt();
+        if (core_stall_effective === 1'b1 && core_step_busy === 1'b0) begin
+            $display("    [PASS] Core halted and step controller in STATE_HALTED.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Core halt expected 1, got %b", core_stall_effective);
+            error_count = error_count + 1;
+        end
+
+        // 4.2 Single-Step Instruction Mode (GPO8[2]=1, GPO8[3]=0 -> C 0204)
+        $display("\n>>> [STEP] 4.2: Triggering Instruction Step via 'C 0204' <<<");
+        fork
+            begin
+                send_uart_string("C 0204\n");
+                wait_for_prompt();
+            end
+            begin
+                // Wait for step controller to enter stepping state
+                wait(core_step_busy === 1'b1);
+                $display("    [TB] Step in flight! core_stall_effective = %b (released).", core_stall_effective);
+                // Simulate instruction execution in pipeline for 3 cycles, then retire
+                repeat (3) @(posedge clk);
+                sim_instr_retired <= 1'b1;
+                @(posedge clk);
+                sim_instr_retired <= 1'b0;
+            end
+        join
+
+        // Verify that step completed and core is re-frozen
+        @(posedge clk);
+        if (step_count === 32'd1 && core_stall_effective === 1'b1) begin
+            $display("    [PASS] Instruction Step executed successfully: step_count = %0d, core re-frozen.", step_count);
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Instruction Step verification failed! step_count=%0d stall=%b", step_count, core_stall_effective);
+            error_count = error_count + 1;
+        end
+
+        // Clear step request bit (C 0104)
+        send_uart_string("C 0104\n");
+        wait_for_prompt();
+
+        // 4.3 Clock Cycle Step Mode (GPO8[2]=1, GPO8[3]=1 -> C 020c)
+        $display("\n>>> [STEP] 4.3: Triggering 1 Clock Cycle Step via 'C 020c' <<<");
+        send_uart_string("C 020c\n");
+        wait_for_prompt();
+        @(posedge clk);
+        if (step_count === 32'd2 && core_stall_effective === 1'b1) begin
+            $display("    [PASS] Clock Cycle Step executed successfully: step_count = %0d, core re-frozen.", step_count);
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Cycle Step verification failed! step_count=%0d stall=%b", step_count, core_stall_effective);
+            error_count = error_count + 1;
+        end
+
+        // Clear step bits (C 010c)
+        send_uart_string("C 010c\n");
+        wait_for_prompt();
+
+        // 4.4 Resume Core
+        $display("\n>>> [STEP] 4.4: Resuming Core via 'C 0102' <<<");
+        send_uart_string("C 0102\n");
+        wait (core_stall_effective == 1'b0);
+        wait_for_prompt();
+        if (core_stall_effective === 1'b0) begin
+            $display("    [PASS] Core resumed successfully (core_stall_effective = 0).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Core resume failed! stall = %b", core_stall_effective);
+            error_count = error_count + 1;
+        end
 
         //---------------------------------------------------------------------
         // FINAL TEST SUMMARY

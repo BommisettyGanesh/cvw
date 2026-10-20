@@ -88,3 +88,4 @@ src/debugger/socdebug_uart.v
 src/debugger/socdebug_ft1248_control.v
 src/debugger/ahb_mux.sv
 src/debugger/riscv_debugger_top.sv
+src/debugger/core_step_controller.sv

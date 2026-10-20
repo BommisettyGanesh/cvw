@@ -194,16 +194,22 @@ assign adp_tx_ready = (dbg_sel == 1'b0) ? uart_adp_tx_ready : ft_adp_tx_ready;
 
 ---
 
-## 4. Pipeline Freeze & Hazard Unit Interface
+## 4. Pipeline Freeze, Hazard Unit & Step Controller (`core_step_controller.sv`)
 
-To halt the RISC-V processor without altering registers or pipeline state:
+To control CPU execution deterministically:
 1. Debugger asserts **`core_halt_o = 1`** via ADP command `C 0202\n`.
-2. `core_halt_o` drives into `hazard.sv` as **`ExternalStall`**.
-3. `hazard.sv` raises pipeline stall signals: `StallF = 1`, `StallD = 1`, `StallE = 1`, `StallM = 1`, `StallW = 1`.
+2. The **Step Controller FSM** (`core_step_controller.sv`) manages `ExternalStall` into `hazard.sv`.
+3. When halted, `hazard.sv` raises pipeline stall signals: `StallF = 1`, `StallD = 1`, `StallE = 1`, `StallM = 1`, `StallW = 1`.
 4. Program Counter (`PCF`), instruction fetch, and writeback registers freeze in place.
-5. `hazard.sv` returns **`core_halted_i = 1`** feedback to the debugger.
+5. `hazard.sv` returns `core_halted_i = 1` feedback to the debugger.
 6. When halted, `ahb_mux.sv` grants exclusive, uninterrupted bus priority to the debugger master.
-7. To resume execution, host issues `C 0102\n`, releasing `ExternalStall` so the CPU continues from the exact instruction where it was halted.
+
+### 4.1 Deterministic Single-Stepping Modes
+The `core_step_controller` supports two hardware-controlled single-stepping modes:
+- **Instruction Step Mode (`C 0204\n`)**: Temporarily un-stalls the core until **`InstrRetired = 1`** (`InstrValidM & ~StallW & ~FlushW` in `wallypipelinedcore.sv`), then immediately re-asserts `ExternalStall` and pulses `step_done`. This executes exactly 1 retired instruction.
+- **Clock-Cycle Step Mode (`C 020c\n`)**: Temporarily un-stalls the core for **exactly 1 clock cycle**, advancing the pipeline by 1 tick, then immediately re-freezes.
+- **Safety Watchdog**: An internal counter prevents debugger hang if an instruction is blocked indefinitely (default 65,536 cycles).
+- **Core Resume (`C 0102\n`)**: Releases `ExternalStall` so the CPU continues running freely from where it was halted.
 
 ---
 
@@ -247,11 +253,11 @@ The testbench compiles and executes cleanly under **QuestaSim-64 2023.4_5**:
 
 ```bash
 cd /home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src/debugger
-vlog -sv socdebug_adp_control.v socdebug_ahb.v socdebug_uart.v socdebug_ft1248_control.v riscv_debugger_top.sv ahb_mux.sv ../accelerator/multiplier_ahb.sv tb/f232h_ft1248_stream.v tb/tb_debugger.sv
+vlog -sv socdebug_adp_control.v socdebug_ahb.v socdebug_uart.v socdebug_ft1248_control.v core_step_controller.sv riscv_debugger_top.sv ahb_mux.sv ../accelerator/multiplier_ahb.sv tb/f232h_ft1248_stream.v tb/tb_debugger.sv
 vsim -c -do "run -all; quit" tb_debugger
 ```
 
-### Verification Results Summary (14 / 14 Passed, 0 Errors):
+### Verification Results Summary (18 / 18 Passed, 0 Errors):
 
 | Test # | Protocol / Mode | Description | Verification Method | Status |
 | :---: | :---: | :--- | :--- | :---: |
@@ -269,6 +275,10 @@ vsim -c -do "run -all; quit" tb_debugger
 | **3.1** | Isolation Test | UART Traffic Blocking | Sent UART commands while `dbg_sel = 1`; verified UART ignored | **PASS** |
 | **3.2** | Isolation Test | Switch back to UART | Switched pad back to `0`, verified UART immediately regains control | **PASS** |
 | **3.3** | System Integrity | Final Core Halt/Resume Cycle | Completed final full cycle over UART with 0 errors | **PASS** |
+| **4.1** | Step Controller | Core Halt in Step FSM | `C 0202` verified in `STATE_HALTED`, `core_stall_effective = 1` | **PASS** |
+| **4.2** | Step Controller | Single Instruction Stepping | `C 0204` triggers step, stalls released, retires 1 instr, auto-freezes | **PASS** |
+| **4.3** | Step Controller | 1 Clock-Cycle Stepping | `C 020c` triggers 1-cycle step, executes 1 clock tick, auto-freezes | **PASS** |
+| **4.4** | Step Controller | Core Resume from Step FSM | `C 0102` returns FSM to `STATE_RUN`, `core_stall_effective = 0` | **PASS** |
 
 ---
 

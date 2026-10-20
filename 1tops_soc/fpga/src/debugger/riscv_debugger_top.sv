@@ -36,9 +36,13 @@ module riscv_debugger_top #(
     inout  wire [FT_WIDTH-1:0]  ft1248_miosio,  // Bi-directional data (TXE# status when idle)
 
     // Core Control & Status Signals
-    output wire                 core_halt_o,    // Connect to ExternalStall of RISC-V Core
-    output wire                 core_reset_o,   // System / Core Reset request
-    input  wire                 core_halted_i,  // Core Halted status feedback from Hazard unit
+    output wire                 core_halt_o,      // Connect to ExternalStall of RISC-V Core
+    output wire                 core_reset_o,     // System / Core Reset request
+    input  wire                 core_halted_i,    // Core Halted status feedback from Hazard unit
+    output wire                 core_step_o,      // Core Step Request (GPO8[2])
+    output wire                 core_step_mode_o, // Core Step Mode (GPO8[3]: 0=Instr, 1=Cycle)
+    input  wire                 core_step_busy_i, // Core Step in progress (GPI8[1])
+    input  wire                 core_step_done_i, // Core Step completed (GPI8[2])
 
     // AHB-Lite Master Interface (Connect to AHB Mux/Arbiter)
     output wire [31:0]          DEBUG_HADDR,
@@ -204,12 +208,16 @@ module riscv_debugger_top #(
         .STDRX_TREADY_o (),
 
         // Core Control & Status
-        .core_halt_o    (core_halt_o),
-        .core_reset_o   (core_reset_o),
-        .core_halted_i  (core_halted_i),
+        .core_halt_o      (core_halt_o),
+        .core_reset_o     (core_reset_o),
+        .core_halted_i    (core_halted_i),
+        .core_step_o      (core_step_o),
+        .core_step_mode_o (core_step_mode_o),
+        .core_step_busy_i (core_step_busy_i),
+        .core_step_done_i (core_step_done_i),
 
-        .GPO8_o         (GPO8),
-        .GPI8_i         (GPI8)
+        .GPO8_o           (GPO8),
+        .GPI8_i           (GPI8)
     );
 
 endmodule
