@@ -77,7 +77,7 @@ The hardware debugger incorporates internal configuration registers for both the
 
 * **Power-On Reset Defaults**:
   * **ASIC**: UART = 868 (`0x0364` for 100 MHz / 115200 baud), FT1248 = 4 (`0x04` for 10 MHz).
-  * **FPGA**: UART = 434 (`0x01B2` for 50 MHz / 115200 baud), FT1248 = 4 (`0x04` for 5 MHz).
+  * **FPGA**: UART = 434 (`0x01B2` for 50 MHz / 115200 baud), FT1248 = 1 (`0x01` for 12.5 MHz on Basys 3 FPGA top).
 * **Glitch-Free Guarantee**: The UART divider register only updates when both RX and TX engines are completely idle (`rx_state == RX_IDLE && tx_state == TX_IDLE`), guaranteeing that command echo/response bytes and framing are never corrupted mid-flight.
 
 | Command | Syntax | Description | Example & Response |
@@ -87,7 +87,7 @@ The hardware debugger incorporates internal configuration registers for both the
 | **Set UART Divider Explicitly** | `B 01<hex16>` | Subcommand `01`: Explicitly sets the 16-bit UART clock divider. | `] B 010364`<br>`B 0x00040364` |
 | **Set FT1248 Divider Explicitly** | `B 02<hex8>` | Subcommand `02`: Explicitly sets the 8-bit FT1248 clock divider. | `] B 020008`<br>`B 0x00080364` |
 | **Set Both Dividers** | `B 03<uart16><ft8>` | Subcommand `03`: Simultaneously sets UART divider (middle 16 bits) and FT1248 divider (low 8 bits). | `] B 03006d01`<br>`B 0x0001006d` (UART 921.6k, FT1248 25MHz) |
-| **Query FT1248 Divider** | `D` | Queries only the 8-bit FT1248 clock divider. | `] D`<br>`D 0x04` |
+| **Query FT1248 Divider** | `D` | Queries only the 8-bit FT1248 clock divider. | `] D`<br>`D 0x01` (FPGA default)<br>`D 0x04` (ASIC default) |
 | **Set FT1248 Divider** | `D <hex8>` | Sets the 8-bit FT1248 clock divider. | `] D 01`<br>`D 0x01` (sets 25 MHz on 100MHz ASIC) |
 
 ### Common Baud Rate Divider Table

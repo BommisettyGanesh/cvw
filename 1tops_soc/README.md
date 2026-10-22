@@ -88,8 +88,9 @@ The SoC uses an **AHB-Lite** interconnect to connect the pipelined core, uncore 
 ## Features
 
 - **Pipelined RISC-V Core**: Minimal rv32i instruction set. No FPU, no caches, no MDU, no branch predictors, no TLBs, no compressed/crypto/bitmanip extensions.
-- **Dual-Protocol Hardware Debugger**: Integrated ASCII Debug Protocol (ADP) engine supporting both **UART** (115200 baud on PMOD JA) and **FT1248** (high-speed synchronous bus on PMOD JB) with physical switch selection (`dbg_sel`).
-- **Non-Intrusive Core Freeze & Arbitrated Bus Master**: Halts the 5-stage CPU pipeline on the fly via `ExternalStall` in `hazard.sv`, granting full AHB-Lite bus mastership to the debugger through `ahb_mux.sv`.
+- **Dual-Protocol Hardware Debugger**: Integrated ASCII Debug Protocol (ADP) engine supporting both **UART** (115200 baud on PMOD JA) and **FT1248** (high-speed synchronous bus on PMOD JB) with physical switch selection (`dbg_sel`). Auto-enters ADP command prompt (`]`) on boot without requiring an escape character (`0x1B`).
+- **Non-Intrusive Core Freeze & Single-Stepping**: Halts the 5-stage CPU pipeline on the fly via `ExternalStall` in `hazard.sv`, granting full AHB-Lite bus mastership to the debugger through `ahb_mux.sv`. Features a dedicated **Core Step Controller** (`core_step_controller.sv`) for single instruction stepping (`C 0204`) and clock-cycle stepping (`C 020c`).
+- **Reconfigurable In-Flight Clock Dividers**: Isolated hardware configuration registers allow dynamic, glitch-free reconfiguration of the UART baud rate divider and FT1248 clock divider via ADP commands `B` and `D`.
 - **Subword-Accurate Memory Access**: `HWSTRB` dynamic byte/halfword/word strobe decoding enables clean byte streaming via binary upload (`U`) without corrupting neighboring memory words.
 - **Dedicated FPGA Implementation (Basys 3)**: Synthesizes instruction RAM (`ram_i`) and data RAM (`ram_d`) into dedicated hardware `RAMB36E1` Block RAM primitives. Includes synchronous UART RX monitoring and prompt detection on LED 15 (`led_rx_detect`).
 - **AHB-Lite Interconnect**: Standard bus interface for attaching IP blocks.
@@ -225,16 +226,23 @@ The `fpga/` directory provides a ready-to-synthesize implementation for the **Di
 
 Configure HTerm with **115200 Baud, 8 Data Bits, 1 Stop Bit, No Parity, No Flow Control**:
 
-1. **Boot Banner**:
+1. **Boot Banner & Direct Auto-Prompt**:
    On power-on or pressing reset button `btnC`, the debugger outputs:
    ```text
-   0x50c1ab04
+    0x50c1ab04
+   ]
    ```
-2. **Wake up Command Mode (`<ESC>` / `0x1B`)**:
-   In HTerm, switch input to **`HEX`**, type `1B`, and send. The board responds with prompt `]` and latches LED 15 ON.
-3. **Execute Commands**:
-   Switch input back to **`ASC`** with **Send on Enter = `CR`**:
+   LED 15 turns solidly ON. **No escape character (`0x1B`) is required!**
+
+2. **Execute Commands**:
+   Set input to **`ASC`** with **Send on Enter = `CR`**:
    - `C 0202` — Halt CPU pipeline (`led_core_halted` turns ON).
+   - `C 0204` / `C 0104` — Single-step 1 retired instruction.
+   - `C 020c` / `C 010c` — Single-step 1 clock cycle.
+   - `C` — Query status (Bit 0 = Halted, Bit 1 = Step Busy, Bit 2 = Step Done).
+   - `B` — Query UART and FT1248 clock dividers (`0x00<FT8><UART16>`).
+   - `B <hex16>` — Set UART baud divider (e.g., `B 00d9` for 230,400 baud at 50 MHz).
+   - `D` / `D <hex8>` — Query / set FT1248 clock divider.
    - `A <hex_addr>` — Set 32-bit AHB address pointer.
    - `R` / `W <data>` — Read or write 32-bit word at current pointer.
    - `F <count>` — Fill `<count>` words with reference value in `V`.
@@ -254,5 +262,8 @@ To test the core, memory, and debugger end-to-end:
 6. Restart and run: `C 0201` $\rightarrow$ `C 0101` $\rightarrow$ `C 0102`
 7. Halt and check result: `C 0202` $\rightarrow$ `A 80002004` $\rightarrow$ `R` $\rightarrow$ replies `R 0x00000078` ($120_{10} = 5!$).
 
-For detailed guides, see [fpga/README.md](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/README.md) and [src/debugger/COMMANDS.md](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/src/debugger/COMMANDS.md).
+For detailed guides, see:
+- [fpga/README.md](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/README.md) — Basys 3 board implementation and bitstream build
+- [fpga/STEP_AND_CLOCK_DIV_VERIFICATION_GUIDE.md](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/STEP_AND_CLOCK_DIV_VERIFICATION_GUIDE.md) — Detailed core stepping and clock division verification guide
+- [src/debugger/COMMANDS.md](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/src/debugger/COMMANDS.md) — Complete ADP command reference and cheatsheet
 
