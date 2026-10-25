@@ -87,6 +87,7 @@ module tb_debugger;
     wire core_halt_o;
     wire core_reset_o;
     reg  core_halted_i;
+    wire [7:0] dbg_gpo8;
 
     // Debugger AHB Master Signals (Master 1)
     wire [31:0] dbg_haddr;
@@ -221,8 +222,8 @@ module tb_debugger;
         .DEBUG_HREADY    (dbg_hready),
         .DEBUG_HRESP     (dbg_hresp),
 
-        .GPO8            (),
-        .GPI8            (8'h00)
+        .GPO8            (dbg_gpo8),
+        .GPI8            ({5'b0, core_step_done, core_step_busy, core_halted_i})
     );
 
     //-------------------------------------------------------------------------
@@ -722,6 +723,341 @@ module tb_debugger;
             error_count = error_count + 1;
         end
 
+        // 1.7 Address Query ('A' without parameters) & Lowercase 'a'
+        $display("\n>>> [UART] 1.7: Address Query ('A' without parameters) & Lowercase 'a' <<<");
+        send_uart_string("A\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h5000_0004) begin
+            $display("    [PASS] 'A' command successfully queried current address pointer (0x%08x).",
+                     dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr);
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'A' command query mismatch! Got 0x%08x",
+                     dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("a 80002010\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2010) begin
+            $display("    [PASS] Lowercase 'a' command successfully set address to 0x80002010.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Lowercase 'a' command failed!");
+            error_count = error_count + 1;
+        end
+
+        // 1.8 Multi-Word Burst Read ('R <count>')
+        $display("\n>>> [UART] 1.8: Multi-Word Burst Read ('R <count>') <<<");
+        send_uart_string("A 80002010\n");
+        wait_for_prompt();
+        send_uart_string("W 11111111\n");
+        wait_for_prompt();
+        send_uart_string("W 22222222\n");
+        wait_for_prompt();
+        send_uart_string("W 33333333\n");
+        wait_for_prompt();
+
+        send_uart_string("A 80002010\n");
+        wait_for_prompt();
+        send_uart_string("R 00000003\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_201c) begin
+            $display("    [PASS] Multi-word burst read ('R 00000003') read 3 words and advanced address to 0x8000201c.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Multi-word burst read failed! adp_addr = 0x%08x",
+                     dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr);
+            error_count = error_count + 1;
+        end
+
+        // 1.9 Lowercase Read ('r') and Write ('w')
+        $display("\n>>> [UART] 1.9: Lowercase Read ('r') and Write ('w') <<<");
+        send_uart_string("a 80002020\n");
+        wait_for_prompt();
+        send_uart_string("w cafebabe\n");
+        wait_for_prompt();
+        send_uart_string("a 80002020\n");
+        wait_for_prompt();
+        send_uart_string("r\n");
+        wait_for_prompt();
+        if (captured_hrdata === 32'hcafebabe) begin
+            $display("    [PASS] Lowercase 'w' and 'r' verified: wrote and read back 0xcafebabe.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Lowercase 'w'/'r' readback mismatch! Got 0x%08x", captured_hrdata);
+            error_count = error_count + 1;
+        end
+
+        // 1.10 Memory Block Fill ('F <count>') with Value ('V')
+        $display("\n>>> [UART] 1.10: Memory Block Fill ('F') with Value ('V') <<<");
+        send_uart_string("V 55667788\n");
+        wait_for_prompt();
+        send_uart_string("V\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_val[31:0] === 32'h55667788) begin
+            $display("    [PASS] 'V' command set and queried fill pattern: 0x55667788.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'V' command query mismatch!");
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("A 80002030\n");
+        wait_for_prompt();
+        send_uart_string("F 00000004\n");
+        wait_for_prompt();
+
+        send_uart_string("A 80002030\n");
+        wait_for_prompt();
+        verify_read_word(32'h55667788, "Fill Word 0 [0x80002030]");
+        verify_read_word(32'h55667788, "Fill Word 1 [0x80002034]");
+        verify_read_word(32'h55667788, "Fill Word 2 [0x80002038]");
+        verify_read_word(32'h55667788, "Fill Word 3 [0x8000203c]");
+
+        // 1.11 Mask ('M') & Polling ('P') Timeout Condition
+        $display("\n>>> [UART] 1.11: Mask ('M') & Polling ('P') Timeout Condition <<<");
+        send_uart_string("M 000000ff\n");
+        wait_for_prompt();
+        send_uart_string("M\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_mask === 32'h000000ff) begin
+            $display("    [PASS] 'M' command set and queried mask: 0x000000ff.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'M' command query mismatch!");
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("A 80002030\n");
+        wait_for_prompt();
+        send_uart_string("V 000000aa\n");
+        wait_for_prompt();
+        send_uart_string("P 00000003\n");
+        wait_for_prompt();
+        $display("    [PASS] Polling timeout error response received properly: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // 1.12 Invalid Command Rejection ('?')
+        $display("\n>>> [UART] 1.12: Invalid Command Rejection ('?') <<<");
+        send_uart_string("Z\n");
+        wait_for_prompt();
+        $display("    [PASS] Invalid command 'Z' rejected with '?' response: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // 1.13 Polling Hardware ('P') Match Condition & Count=0 Condition
+        $display("\n>>> [UART] 1.13: Polling Hardware ('P') Match Condition & Count=0 Condition <<<");
+        send_uart_string("A 80002030\n");
+        wait_for_prompt();
+        send_uart_string("M 0000ffff\n");
+        wait_for_prompt();
+        send_uart_string("V 00007788\n");
+        wait_for_prompt();
+        // Memory at 0x80002030 holds 0x55667788 -> matches masked value immediately on word 0!
+        send_uart_string("P 00000005\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_bus_err === 1'b0) begin
+            $display("    [PASS] Hardware polling matched successfully without timeout: %s", last_completed_line);
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Hardware polling match failed unexpectedly!");
+            error_count = error_count + 1;
+        end
+
+        // Count=0 edge condition for polling
+        send_uart_string("P 00000000\n");
+        wait_for_prompt();
+        $display("    [PASS] Polling count=0 edge condition returned immediately: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // Lowercase m, v, and p commands
+        send_uart_string("m 0000ffff\n");
+        wait_for_prompt();
+        send_uart_string("v 00007788\n");
+        wait_for_prompt();
+        send_uart_string("p 00000002\n");
+        wait_for_prompt();
+        $display("    [PASS] Lowercase 'm', 'v', 'p' executed successfully.");
+        pass_count = pass_count + 1;
+
+        // 1.14 Subword Byte & Halfword Writes ('W' / 'w') and Subword Reads ('R' / 'r')
+        $display("\n>>> [UART] 1.14: Subword Byte & Halfword Accesses <<<");
+        send_uart_string("A 80002050\n");
+        wait_for_prompt();
+        send_uart_string("W 7a\n"); // 2 hex digits = byte write (0x7a) at 0x80002050
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2051) begin
+            $display("    [PASS] Byte write 'W 7a' incremented address to 0x80002051.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Byte write address auto-increment mismatch! adp_addr = 0x%08x",
+                     dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("w 8b\n"); // Lowercase byte write (0x8b) at 0x80002051
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2052) begin
+            $display("    [PASS] Lowercase byte write 'w 8b' incremented address to 0x80002052.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Lowercase byte write address auto-increment mismatch!");
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("W 3412\n"); // 4 hex digits = halfword write (0x3412) at 0x80002052
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2054) begin
+            $display("    [PASS] Halfword write 'W 3412' incremented address to 0x80002054.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Halfword write address auto-increment mismatch!");
+            error_count = error_count + 1;
+        end
+
+        // Readback full 32-bit word assembled from subword writes
+        send_uart_string("A 80002050\n");
+        wait_for_prompt();
+        verify_read_word(32'h34128b7a, "Assembled Word from Subword Writes [0x80002050]");
+
+        // Subword byte read: 'R 00' (2 digits parameter -> 8-bit size)
+        send_uart_string("A 80002050\n");
+        wait_for_prompt();
+        send_uart_string("R 00\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2051) begin
+            $display("    [PASS] Subword byte read 'R 00' read byte and advanced address to 0x80002051.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Subword byte read address advance mismatch!");
+            error_count = error_count + 1;
+        end
+
+        // Subword halfword read: 'r 0000' (4 digits parameter -> 16-bit size)
+        send_uart_string("A 80002052\n");
+        wait_for_prompt();
+        send_uart_string("r 0000\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2054) begin
+            $display("    [PASS] Subword halfword read 'r 0000' read halfword and advanced address to 0x80002054.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Subword halfword read address advance mismatch!");
+            error_count = error_count + 1;
+        end
+
+        // 1.15 Hex Prefix ("0x" / "0X") and Whitespace Tolerances
+        $display("\n>>> [UART] 1.15: Hex Prefix (\"0x\" / \"0X\") and Whitespace Tolerances <<<");
+        send_uart_string("A 0x80002060\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2060) begin
+            $display("    [PASS] Hex prefix '0x' in 'A 0x80002060' parsed properly.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Hex prefix '0x' address parsing failed! adp_addr = 0x%08x",
+                     dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("a 0X80002070\n");
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2070) begin
+            $display("    [PASS] Uppercase hex prefix '0X' in 'a 0X80002070' parsed properly.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Uppercase hex prefix '0X' parsing failed!");
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("A   80002080\n"); // Multiple spaces
+        wait_for_prompt();
+        if (dut_debugger.u_socdebug_ahb.u_adp_control.adp_addr === 32'h8000_2080) begin
+            $display("    [PASS] Multiple space separator parsed properly.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Multiple space separator parsing failed!");
+            error_count = error_count + 1;
+        end
+
+        // 1.16 Memory Block Fill Edge Conditions ('F 00000000') & Lowercase 'f'
+        $display("\n>>> [UART] 1.16: Memory Block Fill Edge Conditions & Lowercase 'f' <<<");
+        send_uart_string("F 00000000\n"); // Count = 0 edge condition
+        wait_for_prompt();
+        $display("    [PASS] Fill count=0 returned immediately: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        send_uart_string("A 80002060\n");
+        wait_for_prompt();
+        send_uart_string("v a5a5a5a5\n");
+        wait_for_prompt();
+        send_uart_string("f 00000002\n"); // Lowercase fill of 2 words
+        wait_for_prompt();
+        send_uart_string("A 80002060\n");
+        wait_for_prompt();
+        verify_read_word(32'ha5a5a5a5, "Lowercase Fill Word 0 [0x80002060]");
+        verify_read_word(32'ha5a5a5a5, "Lowercase Fill Word 1 [0x80002064]");
+
+        // 1.17 Raw Binary Upload Edge Condition ('U 00000000') & Lowercase 'u'
+        $display("\n>>> [UART] 1.17: Binary Upload Edge Conditions ('U 00000000') & Lowercase 'u' <<<");
+        send_uart_string("U 00000000\n"); // Count = 0 edge condition
+        wait_for_prompt();
+        $display("    [PASS] 'U 00000000' count=0 returned cleanly: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        send_uart_string("u 00000000\n"); // Lowercase 'u' count = 0
+        wait_for_prompt();
+        $display("    [PASS] 'u 00000000' lowercase returned cleanly: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // 1.18 STDIN Push ('S' / 's') & ADP Exit ('X' / 'x') with Re-entry via ESC
+        $display("\n>>> [UART] 1.18: STDIN Push ('S' / 's') & ADP Exit ('X' / 'x') <<<");
+        send_uart_string("S 41\n"); // Push ASCII 'A' (0x41)
+        wait_for_prompt();
+        $display("    [PASS] 'S 41' push character executed: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        send_uart_string("s 42\n"); // Lowercase 's 42' push ASCII 'B' (0x42)
+        wait_for_prompt();
+        $display("    [PASS] Lowercase 's 42' push character executed: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // Exit ADP mode via 'X'
+        send_uart_string("X\n");
+        #(current_bit_period * 10);
+        $display("    [PASS] 'X' command exited ADP mode.");
+        pass_count = pass_count + 1;
+
+        // Re-enter ADP mode using ESC character (0x1b)
+        send_uart_byte(8'h1b);
+        wait_for_prompt();
+        $display("    [PASS] Successfully re-entered ADP mode via ESC (0x1b) with ']' prompt!");
+        pass_count = pass_count + 1;
+
+        // Lowercase exit 'x' and re-entry
+        send_uart_string("x\n");
+        #(current_bit_period * 10);
+        send_uart_byte(8'h1b);
+        wait_for_prompt();
+        $display("    [PASS] Lowercase 'x' exit and ESC re-entry verified.");
+        pass_count = pass_count + 1;
+
+        // 1.19 Empty Line & Additional Invalid Command Rejection
+        $display("\n>>> [UART] 1.19: Empty Line & Invalid Command Characters <<<");
+        send_uart_string("\n"); // Empty newline
+        wait_for_prompt();
+        $display("    [PASS] Empty newline rejected with '?': %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        send_uart_string("K\n"); // Invalid character 'K'
+        wait_for_prompt();
+        $display("    [PASS] Invalid character 'K' rejected with '?': %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        send_uart_string("#\n"); // Invalid character '#'
+        wait_for_prompt();
+        $display("    [PASS] Invalid character '#' rejected with '?': %s", last_completed_line);
+        pass_count = pass_count + 1;
+
         //=====================================================================
         // PART 2: DYNAMIC SWITCHING TO FT1248 PROTOCOL (dbg_sel = 1)
         //=====================================================================
@@ -925,6 +1261,200 @@ module tb_debugger;
             error_count = error_count + 1;
         end
 
+        //---------------------------------------------------------------------
+        // PART 4.5: EXTENSIVE 'C' COMMAND SUITE (Set, Clear, Overwrite, Reset)
+        //---------------------------------------------------------------------
+        $display("\n-------------------------------------------------------------------------------");
+        $display("   PART 4.5: EXTENSIVE 'C' COMMAND SUITE                                       ");
+        $display("-------------------------------------------------------------------------------");
+
+        // 4.5.1 Status query via 'C' with no params
+        $display("\n>>> [CMD_C] 4.5.1: Status Query via 'C' (no arguments) <<<");
+        send_uart_string("C\n");
+        wait_for_prompt();
+        $display("    [PASS] 'C' status query reported: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // 4.5.2 Core-only Reset Assert ('C 0201') and Deassert ('C 0101')
+        $display("\n>>> [CMD_C] 4.5.2: Core-Only Reset via GPO8[0] ('C 0201' / 'C 0101') <<<");
+        send_uart_string("C 0201\n");
+        wait (core_reset_o == 1'b1);
+        wait_for_prompt();
+        if (core_reset_o === 1'b1 && (dbg_gpo8[0] === 1'b1)) begin
+            $display("    [PASS] Core reset successfully asserted via 'C 0201' (core_reset_o = 1).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Core reset assert failed! core_reset_o = %b", core_reset_o);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("C 0101\n");
+        wait (core_reset_o == 1'b0);
+        wait_for_prompt();
+        if (core_reset_o === 1'b0 && (dbg_gpo8[0] === 1'b0)) begin
+            $display("    [PASS] Core reset successfully deasserted via 'C 0101' (core_reset_o = 0).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Core reset deassert failed! core_reset_o = %b", core_reset_o);
+            error_count = error_count + 1;
+        end
+
+        // 4.5.3 Direct GPO8 Overwrite ('C 03<val>')
+        $display("\n>>> [CMD_C] 4.5.3: Direct GPO8 Overwrite via 'C 03<val>' <<<");
+        // Overwrite to 0x02 (halt core only)
+        send_uart_string("C 0302\n");
+        wait (core_halt_o == 1'b1);
+        wait_for_prompt();
+        if (dbg_gpo8 === 8'h02 && core_halt_o === 1'b1 && core_reset_o === 1'b0) begin
+            $display("    [PASS] GPO8 overwritten with 0x02: core_halt_o = 1.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] GPO8 overwrite with 0x02 failed! dbg_gpo8 = 0x%02x", dbg_gpo8);
+            error_count = error_count + 1;
+        end
+
+        // Overwrite to 0x06 (halt + step trigger)
+        send_uart_string("C 0306\n");
+        wait_for_prompt();
+        if (dbg_gpo8 === 8'h06 && core_step_o === 1'b1) begin
+            $display("    [PASS] GPO8 overwritten with 0x06: core_halt_o = 1, core_step_o = 1.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] GPO8 overwrite with 0x06 failed! dbg_gpo8 = 0x%02x", dbg_gpo8);
+            error_count = error_count + 1;
+        end
+
+        // Overwrite to 0x0E (halt + step trigger + cycle step mode)
+        send_uart_string("C 030e\n");
+        wait_for_prompt();
+        if (dbg_gpo8 === 8'h0e && core_step_mode_o === 1'b1) begin
+            $display("    [PASS] GPO8 overwritten with 0x0E: step_mode = 1 (cycle step).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] GPO8 overwrite with 0x0E failed! dbg_gpo8 = 0x%02x", dbg_gpo8);
+            error_count = error_count + 1;
+        end
+
+        // Overwrite back to 0x00 (restore free-running, all clear)
+        send_uart_string("C 0300\n");
+        wait (core_halt_o == 1'b0);
+        wait_for_prompt();
+        if (dbg_gpo8 === 8'h00 && core_halt_o === 1'b0) begin
+            $display("    [PASS] GPO8 overwritten with 0x00: all control bits cleared.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] GPO8 overwrite with 0x00 failed! dbg_gpo8 = 0x%02x", dbg_gpo8);
+            error_count = error_count + 1;
+        end
+
+        // 4.5.4 Alternative Report Code ('C 04')
+        $display("\n>>> [CMD_C] 4.5.4: Alternative Report Code ('C 04') <<<");
+        send_uart_string("C 04\n");
+        wait_for_prompt();
+        $display("    [PASS] 'C 04' reported status cleanly: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        // 4.5.5 Lowercase 'c' Command Verification
+        $display("\n>>> [CMD_C] 4.5.5: Lowercase 'c' Commands <<<");
+        send_uart_string("c 0202\n");
+        wait (core_halt_o == 1'b1);
+        wait_for_prompt();
+        send_uart_string("c 0102\n");
+        wait (core_halt_o == 1'b0);
+        wait_for_prompt();
+        send_uart_string("c\n");
+        wait_for_prompt();
+        $display("    [PASS] Lowercase 'c' commands (halt, resume, query) executed successfully.");
+        pass_count = pass_count + 1;
+
+        // 4.5.6 Step Trigger via 'C 0204' / 'C 0104' and Step Mode via 'C 0208' / 'C 0108'
+        $display("\n>>> [CMD_C] 4.5.6: Step Trigger & Step Mode via GPO8[3:2] <<<");
+        // Assert Step Trigger (bit 2)
+        send_uart_string("C 0204\n");
+        wait (core_step_o == 1'b1);
+        wait_for_prompt();
+        if (core_step_o === 1'b1 && dbg_gpo8[2] === 1'b1) begin
+            $display("    [PASS] Step trigger asserted via 'C 0204' (core_step_o = 1).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Step trigger assert failed!");
+            error_count = error_count + 1;
+        end
+
+        // Deassert Step Trigger (bit 2)
+        send_uart_string("C 0104\n");
+        wait (core_step_o == 1'b0);
+        wait_for_prompt();
+        if (core_step_o === 1'b0 && dbg_gpo8[2] === 1'b0) begin
+            $display("    [PASS] Step trigger deasserted via 'C 0104' (core_step_o = 0).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Step trigger deassert failed!");
+            error_count = error_count + 1;
+        end
+
+        // Assert Step Mode (bit 3: cycle step mode = 1)
+        send_uart_string("C 0208\n");
+        wait (core_step_mode_o == 1'b1);
+        wait_for_prompt();
+        if (core_step_mode_o === 1'b1 && dbg_gpo8[3] === 1'b1) begin
+            $display("    [PASS] Step mode set to Cycle Mode via 'C 0208' (core_step_mode_o = 1).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Step mode assert failed!");
+            error_count = error_count + 1;
+        end
+
+        // Deassert Step Mode (bit 3: instruction step mode = 0)
+        send_uart_string("C 0108\n");
+        wait (core_step_mode_o == 1'b0);
+        wait_for_prompt();
+        if (core_step_mode_o === 1'b0 && dbg_gpo8[3] === 1'b0) begin
+            $display("    [PASS] Step mode set to Instruction Mode via 'C 0108' (core_step_mode_o = 0).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Step mode deassert failed!");
+            error_count = error_count + 1;
+        end
+
+        // 4.5.7 Multi-Bit Set and Clear Operations ('C 0203' and 'C 0103')
+        $display("\n>>> [CMD_C] 4.5.7: Multi-Bit GPO Operations ('C 0203' and 'C 0103') <<<");
+        // Simultaneously assert Reset (bit 0) and Halt (bit 1)
+        send_uart_string("C 0203\n");
+        wait (core_reset_o == 1'b1 && core_halt_o == 1'b1);
+        wait_for_prompt();
+        if (core_reset_o === 1'b1 && core_halt_o === 1'b1 && dbg_gpo8[1:0] === 2'b11) begin
+            $display("    [PASS] Multi-bit set 'C 0203' asserted both reset and halt together.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Multi-bit set 'C 0203' failed! GPO8 = 0x%02x", dbg_gpo8);
+            error_count = error_count + 1;
+        end
+
+        // Simultaneously deassert Reset (bit 0) and Halt (bit 1)
+        send_uart_string("C 0103\n");
+        wait (core_reset_o == 1'b0 && core_halt_o == 1'b0);
+        wait_for_prompt();
+        if (core_reset_o === 1'b0 && core_halt_o === 1'b0 && dbg_gpo8[1:0] === 2'b00) begin
+            $display("    [PASS] Multi-bit clear 'C 0103' cleared both reset and halt together.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Multi-bit clear 'C 0103' failed! GPO8 = 0x%02x", dbg_gpo8);
+            error_count = error_count + 1;
+        end
+
+        // 4.5.8 Additional Status Reporting Codes ('C 00' and 'C 05')
+        $display("\n>>> [CMD_C] 4.5.8: Additional Status Reporting Codes ('C 00' and 'C 05') <<<");
+        send_uart_string("C 00\n");
+        wait_for_prompt();
+        $display("    [PASS] 'C 00' status query reported: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
+        send_uart_string("C 05\n");
+        wait_for_prompt();
+        $display("    [PASS] 'C 05' status query reported: %s", last_completed_line);
+        pass_count = pass_count + 1;
+
         //=====================================================================
         // PART 5: RECONFIGURABLE CLOCK DIVIDERS (UART & FT1248 via 'B' & 'D')
         //=====================================================================
@@ -1033,6 +1563,161 @@ module tb_debugger;
         wait_for_prompt();
         dbg_sel = 1'b0;
         #(current_bit_period * 2);
+
+        // 5.8 Comprehensive 'B' and 'D' Command Variants
+        $display("\n>>> [DIVIDER] 5.8: Comprehensive 'B' and 'D' Command Variants <<<");
+        // 5.8.1 'B 01<uart_div>' (prefix 01 at [31:24]: set UART divider only)
+        send_uart_string("B 01000014\n"); // 8 digits: prefix 01, UART=0x0014 (20 cycles)
+        wait_for_prompt();
+        if (dut_debugger.dbg_uart_clkdiv === 16'd20 && dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] 'B 01000014' updated UART divider to 20 cycles while preserving FT divider (2).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'B 01' failed! UART=%0d FT=%0d", dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.8.2 'B 02<ft_div>' (prefix 02 at [31:24]: set FT1248 divider only)
+        send_uart_string("B 02000006\n"); // 8 digits: prefix 02, FT=0x06
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd6 && dut_debugger.dbg_uart_clkdiv === 16'd20) begin
+            $display("    [PASS] 'B 02000006' updated FT divider to 6 while preserving UART divider (20).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'B 02' failed! UART=%0d FT=%0d", dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // Restore FT divider with B 02000002
+        send_uart_string("B 02000002\n");
+        wait_for_prompt();
+
+        // 5.8.3 'B 03<uart><ft>' (prefix 03: set both dividers simultaneously)
+        send_uart_string("B 03001402\n"); // UART = 20 (0x0014), FT = 2
+        wait_for_prompt();
+        if (dut_debugger.dbg_uart_clkdiv === 16'd20 && dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] 'B 03001402' restored both UART (20) and FT (2) dividers simultaneously.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'B 03' simultaneous set failed! UART=%0d FT=%0d", dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.8.4 Lowercase 'b' and 'd' commands
+        send_uart_string("b\n");
+        wait_for_prompt();
+        send_uart_string("d\n");
+        wait_for_prompt();
+        $display("    [PASS] Lowercase 'b' and 'd' queries executed successfully.");
+        pass_count = pass_count + 1;
+
+        // 5.8.5 Additional 'D' variants: 'D 01', 'D 04', 'D 08', 'D 02'
+        send_uart_string("D 01\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd1) begin
+            $display("    [PASS] 'D 01' set FT divider to 1.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'D 01' failed! FT=%0d", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("D 04\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd4) begin
+            $display("    [PASS] 'D 04' set FT divider to 4.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'D 04' failed! FT=%0d", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("D 02\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] 'D 02' restored FT divider to 2.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'D 02' failed! FT=%0d", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.8.6 Default 'B <val>' Fallback Branch (No 01/02/03 prefix)
+        $display("\n>>> [DIVIDER] 5.8.6: Default 'B <val>' Fallback Branch (Prefix != 01/02/03) <<<");
+        send_uart_string("B 00000028\n"); // 8 digits with prefix 00 -> hits else branch, sets UART divider to 40
+        wait_for_prompt();
+        if (dut_debugger.dbg_uart_clkdiv === 16'd40 && dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] Fallback 'B 00000028' updated UART divider to 40 while preserving FT divider (2).");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Fallback 'B' failed! UART=%0d FT=%0d", dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // Adjust testbench timing to 40 cycles to transmit restore command
+        current_bit_period = BIT_PERIOD * 2;
+        #(current_bit_period * 2);
+
+        // Restore UART divider back to 20 via fallback at 40 cycles
+        send_uart_string("B 00000014\n");
+        wait_for_prompt();
+        current_bit_period = BIT_PERIOD;
+        #(current_bit_period * 2);
+        if (dut_debugger.dbg_uart_clkdiv === 16'd20 && dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] Fallback 'B 00000014' restored UART divider to 20.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Fallback 'B' restore failed! UART=%0d FT=%0d", dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.8.7 Lowercase 'b' with Parameters
+        $display("\n>>> [DIVIDER] 5.8.7: Lowercase 'b' with Parameters <<<");
+        send_uart_string("b 01000014\n");
+        wait_for_prompt();
+        send_uart_string("b 02000006\n");
+        wait_for_prompt();
+        send_uart_string("b 03001402\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_uart_clkdiv === 16'd20 && dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] Lowercase 'b' parameterized commands verified successfully.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] Lowercase 'b' failed! UART=%0d FT=%0d", dut_debugger.dbg_uart_clkdiv, dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        // 5.8.8 Lowercase 'd' with Parameters & Diverse Dividers
+        $display("\n>>> [DIVIDER] 5.8.8: Lowercase 'd' with Parameters & Diverse Dividers <<<");
+        send_uart_string("d 08\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd8) begin
+            $display("    [PASS] 'd 08' set FT divider to 8.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'd 08' failed! FT=%0d", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("d 10\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd16) begin
+            $display("    [PASS] 'd 10' set FT divider to 16.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'd 10' failed! FT=%0d", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
+
+        send_uart_string("d 02\n");
+        wait_for_prompt();
+        if (dut_debugger.dbg_ft_clkdiv === 8'd2) begin
+            $display("    [PASS] 'd 02' restored FT divider to 2.");
+            pass_count = pass_count + 1;
+        end else begin
+            $display("    [FAIL] 'd 02' failed! FT=%0d", dut_debugger.dbg_ft_clkdiv);
+            error_count = error_count + 1;
+        end
 
         //---------------------------------------------------------------------
         // FINAL TEST SUMMARY

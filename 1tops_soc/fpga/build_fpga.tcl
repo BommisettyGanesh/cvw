@@ -35,11 +35,12 @@ if {[file exists $proj_dir]} {
 create_project $proj_name $proj_dir -part $part_num -force
 
 # 3. Add configuration include paths
-set inc_dirs [list [file normalize "./config"] [file normalize "./src"] [file normalize "./src/debugger"] [file normalize "./top"]]
+set inc_dirs [list [file normalize "./config"] [file normalize "./src"] [file normalize "./src/debugger"] [file normalize "./src/core"] [file normalize "./src/core/components"] [file normalize "./top"]]
 set_property include_dirs $inc_dirs [get_filesets sources_1]
 if {[llength [get_filesets -quiet sim_1]] > 0} {
     set_property include_dirs $inc_dirs [get_filesets sim_1]
 }
+
 
 # 4. Add configuration header files (.vh)
 set vh_files [glob -nocomplain "./config/*.vh"]

@@ -1,5 +1,6 @@
 // -----------------------------------------------------------------------------
 // RTLvision PRO Filelist for CORE-V Wally RV32 SoC (1tops_soc)
+// Upgraded with 5-Stage Pipelined RV32I Core & Retained Uncore Subsystem
 // -----------------------------------------------------------------------------
 
 // Include directories
@@ -7,6 +8,8 @@
 +incdir+../src
 +incdir+../schematics
 +incdir+../src/debugger
++incdir+../src/core
++incdir+../src/core/components
 
 // SystemVerilog Package (Must be parsed before modules using cvw::*)
 ../src/cvw.sv
@@ -25,13 +28,6 @@
 ../src/debugger/socdebug_ahb.v
 ../src/debugger/socdebug_ft1248_control.v
 ../src/debugger/socdebug_uart.v
-
-// External Bus Unit (EBU)
-../src/ebu/ahbinterface.sv
-../src/ebu/busfsm.sv
-../src/ebu/controllerinput.sv
-../src/ebu/ebufsmarb.sv
-../src/ebu/ebu.sv
 
 // Generic components & memory
 ../src/generic/adder.sv
@@ -54,57 +50,9 @@
 ../src/generic/mux.sv
 ../src/generic/priorityonehot.sv
 
-// Hazard Detection Unit
-../src/hazard/hazard.sv
-
-// Integer Execution Unit (IEU)
-../src/ieu/alu.sv
-../src/ieu/comparator.sv
-../src/ieu/controller.sv
-../src/ieu/datapath.sv
-../src/ieu/extend.sv
-../src/ieu/ieu.sv
-../src/ieu/regfile.sv
-../src/ieu/shifter.sv
-
-// Instruction Fetch Unit (IFU)
-../src/ifu/bpred/icpred.sv
-../src/ifu/ifu.sv
-../src/ifu/irom.sv
-
-// Load Store Unit (LSU)
-../src/lsu/align.sv
-../src/lsu/amoalu.sv
-../src/lsu/atomic.sv
-../src/lsu/dtim.sv
-../src/lsu/endianswap.sv
-../src/lsu/lrsc.sv
-../src/lsu/lsu.sv
-../src/lsu/subwordread.sv
-../src/lsu/subwordwrite.sv
-../src/lsu/swbytemask.sv
-
-// Memory Management Unit (MMU) & PMP
+// Address Decoders (Used by Uncore)
 ../src/mmu/adrdecs.sv
 ../src/mmu/adrdec.sv
-../src/mmu/mmu.sv
-../src/mmu/pmachecker.sv
-../src/mmu/pmpadrdec.sv
-../src/mmu/pmpchecker.sv
-
-// Privileged Architecture & CSRs
-../src/privileged/csrc.sv
-../src/privileged/csri.sv
-../src/privileged/csrm.sv
-../src/privileged/csrsr.sv
-../src/privileged/csrs.sv
-../src/privileged/csr.sv
-../src/privileged/csru.sv
-../src/privileged/privdec.sv
-../src/privileged/privileged.sv
-../src/privileged/privmode.sv
-../src/privileged/privpiperegs.sv
-../src/privileged/trap.sv
 
 // Uncore Subsystem & Peripherals
 ../src/uncore/ahbapbbridge.sv
@@ -120,6 +68,29 @@
 ../src/uncore/uartPC16550D.sv
 ../src/uncore/uncore.sv
 
-// Wally Core & SoC
+// Upgraded 5-Stage Pipelined RV32I Processor Core
+../src/core/components/alu_decoder.v
+../src/core/components/alu.v
+../src/core/components/branching_unit.v
+../src/core/components/main_decoder.v
+../src/core/components/priv_decoder.v
+../src/core/components/controller.v
+../src/core/components/csr_file.v
+../src/core/components/hazard.v
+../src/core/components/imm_extend.v
+../src/core/components/pl_reg_de.v
+../src/core/components/pl_reg_em.v
+../src/core/components/pl_reg_fd.v
+../src/core/components/pl_reg_mw.v
+../src/core/components/reg_file.v
+../src/core/components/reset_ff.v
+../src/core/components/subword_unit.v
+../src/core/components/trap_unit.v
+../src/core/components/ahbinterface.v
+../src/core/components/ebu.v
+../src/core/components/datapath.v
+../src/core/riscv_cpu.v
+
+// Wally Core Wrapper & SoC Top Level
 ../src/wally/wallypipelinedcore.sv
 ../src/wally/wallypipelinedsoc.sv

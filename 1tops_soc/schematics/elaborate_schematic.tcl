@@ -5,13 +5,15 @@
 set script_dir [file dirname [file normalize [info script]]]
 set proj_file [file join $script_dir "rv32_core_schematic" "rv32_core_schematic.xpr"]
 
-# Create project if it doesn't exist yet
-if {![file exists $proj_file]} {
-    puts "Project file not found. Running create_project.tcl..."
-    source [file join $script_dir "create_project.tcl"]
-} else {
-    puts "Opening existing Vivado project: $proj_file"
-    open_project $proj_file
+# Open or create project if not already open
+if {[current_project -quiet] eq ""} {
+    if {![file exists $proj_file]} {
+        puts "Project file not found. Running create_project.tcl..."
+        source [file join $script_dir "create_project.tcl"]
+    } else {
+        puts "Opening existing Vivado project: $proj_file"
+        open_project $proj_file
+    }
 }
 
 # Set top module to top wrapper

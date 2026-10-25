@@ -19,6 +19,13 @@ echo "==========================================================================
 
 # Ensure Vivado environment is available
 if ! command -v xvlog &> /dev/null; then
+    if [ -f "/etc/profile" ]; then
+        source /etc/profile
+    fi
+    module load xilinx/vivado/2024.2 2>/dev/null || true
+fi
+
+if ! command -v xvlog &> /dev/null; then
     if [ -f "/home/ganesh/Xilinx/2025.2/Vivado/settings64.sh" ]; then
         source "/home/ganesh/Xilinx/2025.2/Vivado/settings64.sh"
     elif [ -f "/tools/Xilinx/Vivado/2025.2/settings64.sh" ]; then

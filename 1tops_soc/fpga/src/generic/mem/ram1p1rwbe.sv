@@ -116,13 +116,18 @@ module ram1p1rwbe import cvw::*; #(parameter USE_SRAM=0, DEPTH=64, WIDTH=44, PRE
           for (i = 0; i < WIDTH/8; i = i + 1) begin
             if (bwe[i]) RAM[addr][i*8 +: 8] <= din[i*8 +: 8];
           end
-          if (WIDTH % 8 != 0) begin
-            if (bwe[WIDTH/8]) RAM[addr][WIDTH-1:WIDTH-WIDTH%8] <= din[WIDTH-1:WIDTH-WIDTH%8];
-          end
         end
         dout_reg <= RAM[addr];
       end
     end
+
+    if (WIDTH % 8 != 0) begin : gen_rem
+      always @(posedge clk) begin
+        if (ce && we && bwe[WIDTH/8])
+          RAM[addr][WIDTH-1 : WIDTH - (WIDTH % 8)] <= din[WIDTH-1 : WIDTH - (WIDTH % 8)];
+      end
+    end
+
 
     assign dout = dout_reg;
   end

@@ -25,6 +25,8 @@
 // and limitations under the License.
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
+`ifndef MUX_DEFINED
+`define MUX_DEFINED
 /* verilator lint_off DECLFILENAME */
 
 module mux2 #(parameter WIDTH = 8) (
@@ -77,3 +79,5 @@ module mux7 #(parameter WIDTH = 8) (
 endmodule
 
 /* verilator lint_on DECLFILENAME */
+`endif
+

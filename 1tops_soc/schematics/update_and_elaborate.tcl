@@ -25,22 +25,23 @@ if {![file exists $proj_file]} {
 }
 
 # 1. Update include directories
-set_property include_dirs [list $config_dir $src_dir $script_dir] [get_filesets sources_1]
+set inc_dirs [list $config_dir $src_dir $script_dir [file join $src_dir "core"] [file join $src_dir "core" "components"] [file join $src_dir "debugger"]]
+set_property include_dirs $inc_dirs [get_filesets sources_1]
 
-# 2. Rescan and add any new .sv or .vh files added to src/ or config/
+# 2. Rescan and add any new .sv, .v or .vh files added to src/ or config/
 set vh_files [glob -nocomplain [file join $config_dir "*.vh"]]
 if {[llength $vh_files] > 0} {
     add_files -norecurse -quiet -fileset sources_1 {*}$vh_files
 }
 
-set sv_patterns [list \
-    [file join $src_dir "*.sv"] \
-    [file join $src_dir "*" "*.sv"] \
-    [file join $src_dir "*" "*" "*.sv"] \
-    [file join $src_dir "*" "*" "*" "*.sv"] \
+set src_patterns [list \
+    [file join $src_dir "*.sv"]               [file join $src_dir "*.v"] \
+    [file join $src_dir "*" "*.sv"]           [file join $src_dir "*" "*.v"] \
+    [file join $src_dir "*" "*" "*.sv"]       [file join $src_dir "*" "*" "*.v"] \
+    [file join $src_dir "*" "*" "*" "*.sv"]   [file join $src_dir "*" "*" "*" "*.v"] \
 ]
 
-foreach pat $sv_patterns {
+foreach pat $src_patterns {
     set match_files [glob -nocomplain $pat]
     if {[llength $match_files] > 0} {
         add_files -norecurse -quiet -fileset sources_1 {*}$match_files
@@ -48,7 +49,7 @@ foreach pat $sv_patterns {
 }
 
 # Set all .sv file types to SystemVerilog
-set sv_files [get_files -of_objects [get_filesets sources_1] *.sv]
+set sv_files [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.sv"}]
 if {[llength $sv_files] > 0} {
     set_property FILE_TYPE {SystemVerilog} $sv_files
 }

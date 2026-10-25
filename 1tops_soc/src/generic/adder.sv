@@ -25,6 +25,8 @@
 // and limitations under the License.
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
+`ifndef ADDER_DEFINED
+`define ADDER_DEFINED
 module adder #(parameter WIDTH=8) (
   input  logic [WIDTH-1:0] a, b,
   output logic [WIDTH-1:0] y
@@ -32,3 +34,5 @@ module adder #(parameter WIDTH=8) (
 
   assign y = a + b;
 endmodule
+`endif
+
