@@ -1,0 +1,46 @@
+# Document and Presentation Generation Scripts
+build_docs.py
+build_*.py
+*ppt*.py
+*docx*.py
+
+# Word and PowerPoint Documents
+*.docx
+*.pptx
+~$*.docx
+~$*.pptx
+
+# Rendered Images and Diagrams
+*.png
+*.svg
+
+# Simulation Artifacts
+transcript
+work/
+vsim.wlf
+*.wlf
+
+# Vivado Workspaces, Projects, Bitstreams, and Artifacts
+vivado_workspace/
+vivado_proj*/
+rv32_core_schematic/
+*.xpr
+*.sim/
+*.bit
+*.bin
+*.dcp
+*.sysdef
+*.bak
+*.jou
+*.str
+*.pb
+vivado*.log
+vivado*.jou
+vivado*.str
+.Xil/
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.wdf
+

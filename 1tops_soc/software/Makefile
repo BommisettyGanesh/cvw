@@ -1,4 +1,10 @@
-RISCV_PREFIX ?= $(shell which riscv64-unknown-elf-gcc >/dev/null 2>&1 && echo riscv64-unknown-elf- || (which riscv-none-elf-gcc >/dev/null 2>&1 && echo riscv-none-elf- || echo riscv64-unknown-elf-))
+CVW_BIN = /home/ganesh/cvw/bin
+ifneq ($(wildcard $(CVW_BIN)/riscv64-unknown-elf-gcc),)
+  RISCV_PREFIX ?= $(CVW_BIN)/riscv64-unknown-elf-
+else
+  RISCV_PREFIX ?= riscv64-unknown-elf-
+endif
+
 CC = $(RISCV_PREFIX)gcc
 OBJCOPY = $(RISCV_PREFIX)objcopy
 
@@ -18,6 +24,7 @@ factorial.elf: factorial.S
 
 factorial.bin: factorial.elf
 	$(OBJCOPY) -O binary --only-section=.text $< $@
+	mkdir -p ../fpga
 	cp -f $@ ../fpga/factorial.bin
 
 step_test.elf: step_test.S
@@ -25,6 +32,7 @@ step_test.elf: step_test.S
 
 step_test.bin: step_test.elf
 	$(OBJCOPY) -O binary --only-section=.text $< $@
+	mkdir -p ../fpga
 	cp -f $@ ../fpga/step_test.bin
 
 trap_test.elf: trap_test.S
@@ -32,6 +40,7 @@ trap_test.elf: trap_test.S
 
 trap_test.bin: trap_test.elf
 	$(OBJCOPY) -O binary --only-section=.text $< $@
+	mkdir -p ../fpga
 	cp -f $@ ../fpga/trap_test.bin
 
 profile_accel.elf: profile_accel.S
@@ -39,6 +48,7 @@ profile_accel.elf: profile_accel.S
 
 profile_accel.bin: profile_accel.elf
 	$(OBJCOPY) -O binary --only-section=.text $< $@
+	mkdir -p ../fpga
 	cp -f $@ ../fpga/profile_accel.bin
 
 spi_test.elf: spi_test.S
@@ -46,6 +56,7 @@ spi_test.elf: spi_test.S
 
 spi_test.bin: spi_test.elf
 	$(OBJCOPY) -O binary --only-section=.text $< $@
+	mkdir -p ../fpga
 	cp -f $@ ../fpga/spi_test.bin
 
 clean:

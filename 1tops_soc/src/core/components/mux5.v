@@ -1,5 +1,3 @@
-`ifndef MUX5_DEFINED
-`define MUX5_DEFINED
 module mux5 #(parameter WIDTH = 32) (
     input      [WIDTH-1:0] d0, d1, d2, d3, d4,
     input      [2:0]       sel,
@@ -18,5 +16,3 @@ always @(*) begin
 end
 
 endmodule
-`endif
-

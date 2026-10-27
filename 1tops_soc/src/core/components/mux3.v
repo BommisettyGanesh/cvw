@@ -1,5 +1,3 @@
-`ifndef MUX3_DEFINED
-`define MUX3_DEFINED
 module mux3 #(parameter WIDTH = 8) (
     input       [WIDTH-1:0] d0, d1, d2,
     input       [1:0] sel,
@@ -9,6 +7,4 @@ module mux3 #(parameter WIDTH = 8) (
 assign y = sel[1] ? d2: (sel[0] ? d1 : d0);
 
 endmodule
-`endif
-
 

@@ -64,6 +64,7 @@ src/core/components/datapath.v
 src/core/riscv_cpu.v
 
 src/wally/wallypipelinedcore.sv
+src/wally/riscv_soc_ahb.v
 src/wally/wallypipelinedsoc.sv
 
 src/accelerator/multiplier_ahb.sv

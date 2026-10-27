@@ -7,13 +7,6 @@ module spi_fifo #(parameter M=3, N=8)(                 // 2^M entries of N bits 
     output logic         wfull, rempty,
     output logic         wwatermark, rwatermark);
 
-    /* Pointer FIFO using design elements from "Simulation and Synthesis Techniques
-       for Asynchronous FIFO Design" by Clifford E. Cummings. Namely, M bit read and write pointers
-       are an extra bit larger than address size to determine full/empty conditions.
-       Watermark comparisons use 2's complement subtraction between the M-1 bit pointers,
-       which are also used to address memory
-    */
-
     logic [N-1:0] mem[2**M];
     logic [M:0] rptr, wptr;
     logic [M:0] rptrnext, wptrnext;

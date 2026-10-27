@@ -1,0 +1,334 @@
+================================================================================
+          SOCDEBUG INTEGRATION FOR CORE-V WALLY RISC-V SoC (1TOPS_SOC)
+================================================================================
+Date: 2026-09-21
+Location: /home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src/debugger/
+
+This document details all files added, modifications made, signal connections,
+and usage instructions for the SoCDebug debug controller adapted for CORE-V Wally.
+
+--------------------------------------------------------------------------------
+1. FILES ADDED & DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+src/debugger/
+├── socdebug_adp_control.v     - ASCII Debug Protocol (ADP) FSM engine (SoC Labs)
+├── socdebug_ahb.v             - AHB-Lite Master adapter with core halt/resume decoding
+├── socdebug_uart.v            - Clean UART RX/TX transceiver with AXI-Stream interface
+├── riscv_debugger_top.sv      - Self-contained top-level debugger subsystem
+├── ahb_mux.sv                 - 2-Master AHB-Lite bus arbiter & multiplexer
+├── accelerator_debug_def.vh   - Memory map & register definitions for accelerator space
+├── CHANGES.txt                - This reference guide
+├── sw/
+│   └── dbg_cli.py             - Python host CLI tool (Halt, Resume, Read, Write)
+└── tb/
+    └── tb_debugger.sv         - Self-checking simulation testbench (QuestaSim)
+
+Note: In accordance with project instructions, NO existing files outside this
+debugger directory have been modified.
+
+--------------------------------------------------------------------------------
+2. KEY MODIFICATIONS & CUSTOMIZATIONS FROM ORIGINAL SOCDEBUG_TECH
+--------------------------------------------------------------------------------
+a) Hardware Core Halt & Resume Support:
+   - In the original NanoSoC design, debug signals like EDBGRQ and DBGRESTART
+     were tied to ground, and GPO8 only provided system reset.
+   - In this adapted version, GPO8 bit 1 is explicitly mapped to 'core_halt_o'.
+   - 'core_halt_o' connects directly to the 'ExternalStall' port of CORE-V Wally's
+     hazard unit (hazard.sv).
+   - Asserting 'core_halt_o' freezes all 5 pipeline stages (Fetch, Decode,
+     Execute, Memory, Writeback) in place without flushing.
+   - Deasserting 'core_halt_o' resumes execution from the exact instruction cycle.
+
+b) Direct UART Transceiver Integration (socdebug_uart.v):
+   - Bridges physical serial pins (uart_rx, uart_tx) directly to the ADP byte
+     stream (COMRX/COMTX).
+   - Configurable CLK_FREQ and BAUD_RATE (default: 50 MHz, 115200 baud).
+
+c) Dedicated 2-Master AHB-Lite Bus Arbiter/Mux (ahb_mux.sv):
+   - Connects Master 0 (RISC-V CPU Core) and Master 1 (Debugger).
+   - When core_halt is active (or when Core is IDLE), the Debugger receives
+     full bus mastership to read/write memory and accelerator spaces.
+   - Properly handles 2-phase AHB pipelining (address phase and data phase).
+
+d) Dedicated Accelerator Memory Space (0x30000000 - 0x30FFFFFF):
+   - Defined in accelerator_debug_def.vh.
+   - Allocated a full 16 Megabyte address space for the upcoming larger accelerator
+     (CSRs, Input Activations, Weight Memory, Output Buffers), while maintaining
+     backward compatibility with the current dummy multiplier.
+
+--------------------------------------------------------------------------------
+3. SIGNAL CONNECTION GUIDE FOR wallypipelinedsoc.sv
+--------------------------------------------------------------------------------
+When you are ready to instantiate the debugger inside wallypipelinedsoc.sv,
+connect the ports as follows:
+
+1) Instantiate riscv_debugger_top:
+   wire dbg_core_halt;
+   wire [31:0] dbg_haddr, dbg_hwdata, dbg_hrdata;
+   wire [1:0]  dbg_htrans;
+   wire [2:0]  dbg_hsize, dbg_hburst;
+   wire [3:0]  dbg_hprot;
+   wire        dbg_hwrite, dbg_hmastlock, dbg_hready, dbg_hresp;
+
+   riscv_debugger_top #(
+       .CLK_FREQ    (50_000_000),
+       .BAUD_RATE   (115200),
+       .PROMPT_CHAR ("]")
+   ) u_debugger (
+       .clk             (HCLK),
+       .rst_n           (HRESETn),
+       .uart_rx         (DEBUG_UART_RX_PIN), // From external pin or USB-UART
+       .uart_tx         (DEBUG_UART_TX_PIN), // To external pin or USB-UART
+       .core_halt_o     (dbg_core_halt),
+       .core_reset_o    (),
+       .core_halted_i   (dbg_core_halt),
+       .DEBUG_HADDR     (dbg_haddr),
+       .DEBUG_HBURST    (dbg_hburst),
+       .DEBUG_HMASTLOCK (dbg_hmastlock),
+       .DEBUG_HPROT     (dbg_hprot),
+       .DEBUG_HSIZE     (dbg_hsize),
+       .DEBUG_HTRANS    (dbg_htrans),
+       .DEBUG_HWDATA    (dbg_hwdata),
+       .DEBUG_HWRITE    (dbg_hwrite),
+       .DEBUG_HRDATA    (dbg_hrdata),
+       .DEBUG_HREADY    (dbg_hready),
+       .DEBUG_HRESP     (dbg_hresp),
+       .GPO8            (),
+       .GPI8            (8'h00)
+   );
+
+2) Connect Halt to RISC-V Core:
+   Connect 'dbg_core_halt' to the .ExternalStall port of 'core':
+   .ExternalStall (dbg_core_halt)
+
+3) Connect AHB Bus Mux (ahb_mux.sv):
+   Insert ahb_mux between the core AHB master and the uncore/accelerator bus:
+   ahb_mux #(
+       .ADDR_WIDTH (32),
+       .DATA_WIDTH (32)
+   ) u_ahb_mux (
+       .HCLK         (HCLK),
+       .HRESETn      (HRESETn),
+       .core_halt    (dbg_core_halt),
+
+       // M0: CPU Core AHB outputs from core
+       .M0_HADDR     (core_haddr),
+       .M0_HWDATA    (core_hwdata),
+       .M0_HWRITE    (core_hwrite),
+       .M0_HTRANS    (core_htrans),
+       .M0_HSIZE     (core_hsize),
+       .M0_HBURST    (core_hburst),
+       .M0_HPROT     (core_hprot),
+       .M0_HMASTLOCK (core_hmastlock),
+       .M0_HRDATA    (core_hrdata),
+       .M0_HREADY    (core_hready),
+       .M0_HRESP     (core_hresp),
+
+       // M1: Debugger AHB
+       .M1_HADDR     (dbg_haddr),
+       .M1_HWDATA    (dbg_hwdata),
+       .M1_HWRITE    (dbg_hwrite),
+       .M1_HTRANS    (dbg_htrans),
+       .M1_HSIZE     (dbg_hsize),
+       .M1_HBURST    (dbg_hburst),
+       .M1_HPROT     (dbg_hprot),
+       .M1_HMASTLOCK (dbg_hmastlock),
+       .M1_HRDATA    (dbg_hrdata),
+       .M1_HREADY    (dbg_hready),
+       .M1_HRESP     (dbg_hresp),
+
+       // Downstream Slave Bus to uncore & accelerator
+       .S_HADDR      (HADDR),
+       .S_HWDATA     (HWDATA),
+       .S_HWRITE     (HWRITE),
+       .S_HTRANS     (HTRANS),
+       .S_HSIZE      (HSIZE),
+       .S_HBURST     (HBURST),
+       .S_HPROT      (HPROT),
+       .S_HMASTLOCK  (HMASTLOCK),
+       .S_HRDATA     (HRDATA),
+       .S_HREADY     (HREADY),
+       .S_HRESP      (HRESP)
+   );
+
+--------------------------------------------------------------------------------
+4. ACCELERATOR MEMORY MAP (0x30000000 - 0x30FFFFFF)
+--------------------------------------------------------------------------------
+The accelerator region corresponds to EXT_MEM_BASE (0x30000000) and
+EXT_MEM_RANGE (0x00FFFFFF).
+
+A. Current Dummy Multiplier (multiplier_ahb.sv):
+   - 0x30000000 : Operand A (32-bit R/W)
+   - 0x30000004 : Operand B (32-bit R/W)
+   - 0x30000008 : Product Result (32-bit Read-Only)
+   - 0x3000000C : Console Write Char (8-bit Write-Only)
+
+B. Subdivided Space for Upcoming Larger Accelerator (e.g. 1TOPS / CTM):
+   - 0x30000000 - 0x30000FFF (4 KB) : Control & Status Registers (CSRs)
+       0x30000000: Control Register (Start, Abort, Soft Reset, IRQ Enable)
+       0x30000004: Status Register (Busy, Done, Error, Status flags)
+       0x30000008: Config Register (Model mode, Batch size, Precision)
+       0x3000000C: Performance Counters (Cycle count)
+   - 0x30001000 - 0x300FFFFF (~1 MB) : Input Data / Feature Activations Buffer
+   - 0x30100000 - 0x307FFFFF (~7 MB) : Model Weights / Hypervectors / Clause Memory
+   - 0x30800000 - 0x30FFFFFF (~8 MB) : Output Predictions / Classification Buffer
+
+--------------------------------------------------------------------------------
+5. DEBUGGER PROTOCOL & COMMAND REFERENCE
+--------------------------------------------------------------------------------
+The debugger uses standard ASCII Debug Protocol (ADP) over UART:
+
+- Halt Core:
+    Send: C 0202<ENTER>
+    Sets bit 1 of GPO8 -> ExternalStall = 1 -> Pipeline frozen.
+
+- Resume Core:
+    Send: C 0102<ENTER>
+    Clears bit 1 of GPO8 -> ExternalStall = 0 -> Pipeline resumes.
+
+- Set Memory Address:
+    Send: A <hex_addr><ENTER>   (e.g. A 30000008)
+
+- Read Memory / Register:
+    Send: R<ENTER>
+    Performs AHB bus read at current address and prints 32-bit hex value.
+
+- Write Memory / Register:
+    Send: W <hex_data><ENTER>   (e.g. W 00000010)
+
+- Reset Core:
+    Send: C 0201<ENTER> (assert reset)
+    Send: C 0101<ENTER> (deassert reset)
+
+--------------------------------------------------------------------------------
+6. PYTHON HOST TOOL (sw/dbg_cli.py)
+--------------------------------------------------------------------------------
+Usage examples:
+  python3 dbg_cli.py -d /dev/ttyUSB0 halt
+  python3 dbg_cli.py -d /dev/ttyUSB0 read 0x30000008
+  python3 dbg_cli.py -d /dev/ttyUSB0 write 0x30000000 0x00000007
+  python3 dbg_cli.py -d /dev/ttyUSB0 read_accel
+  python3 dbg_cli.py -d /dev/ttyUSB0 resume
+
+--------------------------------------------------------------------------------
+7. VERIFICATION WITH QUESTASIM (vlog & vsim)
+--------------------------------------------------------------------------------
+To compile and run the self-checking testbench:
+  cd /home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src/debugger
+  vlog -sv socdebug_adp_control.v socdebug_ahb.v socdebug_uart.v riscv_debugger_top.sv ahb_mux.sv ../accelerator/multiplier_ahb.sv tb/tb_debugger.sv
+  vsim -c -do "run -all; quit" tb_debugger
+
+Verified outputs:
+  - UART communication and banner handshake.
+  - core_halt_o asserts to 1 upon receiving halt command.
+  - Debugger initiates AHB Master read to dummy accelerator at 0x30000008.
+  - Successfully verifies product output (42 / 0x2A).
+  - core_halt_o deasserts to 0 upon receiving resume command.
+
+--------------------------------------------------------------------------------
+8. DUAL-PROTOCOL INTEGRATION: FT1248 & UART HARDWARE MULTIPLEXING
+--------------------------------------------------------------------------------
+Update Date: 2026-10-05
+
+a) Integrated FT1248 Synchronous High-Speed Protocol:
+   - Added 'socdebug_ft1248_control.v' directly into the debugger subsystem.
+   - Synchronous high-speed master protocol engine capable of operating up to
+     30 MHz with FTDI USB-to-FT1248 bridge chips (FT232H / FT2232H).
+   - Dedicated external pin group:
+       * ft1248_clk    - SCLK clock output from SoC to FTDI.
+       * ft1248_ss_n   - SS# chip select output from SoC to FTDI.
+       * ft1248_miso   - MISO status/data input from FTDI (RXF# status in idle).
+       * ft1248_miosio - Bidirectional data pin(s) (TXE# status in idle).
+
+b) Dedicated Hardware Pin Muxing ('dbg_sel'):
+   - Added a real physical hardware input pad: 'dbg_sel'.
+   - dbg_sel = 0 (LOW)  -> Dedicated UART active (FT1248 isolated).
+   - dbg_sel = 1 (HIGH) -> Dedicated FT1248 active (UART isolated).
+   - Internal 2-to-1 AXI-Stream multiplexer switches RX/TX streams cleanly into
+     the shared SoCDebug ADP controller and AHB Master.
+   - UART and FT1248 maintain independent external physical pins going out of chip.
+
+c) Comprehensive Testbench (tb/tb_debugger.sv):
+   - Added FT232H behavioral emulator model (tb/f232h_ft1248_stream.v).
+   - Fully tests 14 scenarios spanning:
+       * Part 1: UART Protocol (Core Halt with 'core_halted' feedback, IRAM code
+         loading, DRAM sub-word access, 1TOPS multiplier, bus errors, core resume).
+       * Part 2: FT1248 Protocol (Dynamic pad switch, Core Halt, DRAM write/readback,
+         1TOPS multiplier, hardware register polling 'P', core resume).
+       * Part 3: Multiplexer Isolation (UART traffic ignored while dbg_sel=1,
+         dynamic switch back to UART, regaining control immediately).
+   - All 14 test scenarios pass 100% with 0 errors and 0 warnings under QuestaSim.
+
+d) Software & Documentation Updates:
+   - Updated sw/dbg_cli.py with '--protocol {uart, ft1248}', baud/FTDI URL options,
+     automatic readback verification, and mock testing.
+   - Updated DEBUGGER_WIRING_GUIDE.md and COMMANDS.md with dual-protocol schematics.
+
+--------------------------------------------------------------------------------
+9. FPGA BOARD TESTING, SYNCHRONOUS UART RX MONITOR & SUBWORD HWSTRB FIX
+--------------------------------------------------------------------------------
+Update Date: 2026-10-12
+
+a) Synchronous UART RX Monitor & Activity LED (wally_soc_fpga_top.sv):
+   - Problem: Asynchronous toggle logic 'always @(uart_rx) led_rx_detect = led_rx_detect ^ uart_rx;'
+     created combinational loop violations in Vivado implementation.
+   - Solution: Designed a clean, fully-synchronous UART RX monitor running on
+     the 50 MHz SoC clock ('clk_soc'):
+     * 2-stage synchronizer to prevent metastability.
+     * Baud rate generator (115200 baud, 434 clock cycles per bit).
+     * 8-bit shift register and start/stop bit validation FSM.
+     * ASCII ']' (0x5D) detection logic that asserts and latches a sticky bit,
+       keeping LED 15 (Pin L1) solidly ON to indicate ADP command prompt state.
+     * Monostable pulse stretcher (~200 ms) to flash LED 15 on any valid byte.
+
+b) Top-Level System Reset Polarity Correction (wally_soc_fpga_top.sv):
+   - Problem: 'reset_ext' was set as '(~reset_btn) & mmcm_locked;'. In CORE-V
+     Wally, 'reset_ext' is routed directly through a non-inverting two-stage
+     synchronizer into active-high 'reset'. This held the entire SoC, uncore,
+     and debugger in permanent reset whenever 'reset_btn' was unpressed.
+   - Solution: Inverted logic to 'reset_ext = reset_btn | (~mmcm_locked);' matching
+     the active-high Basys 3 center button 'btnC' (U18).
+
+c) Subword HWSTRB Byte Strobe Decoding Fix (wallypipelinedsoc.sv):
+   - Problem: In 'wallypipelinedsoc.sv', whenever 'dbg_core_halt = 1', the bus
+     write strobes were hardcoded to 'HWSTRB = 4'b1111'. When streaming binary
+     code via 'U <count>', single-byte writes corrupted adjacent bytes within
+     the 32-bit word.
+   - Solution: Replaced hardcoded strobes with dynamic decoding 'dbg_HWSTRB'
+     derived from 'HSIZE[1:0]' and 'HADDR[1:0]':
+     * Byte writes (HSIZE=0): selectively assert only lane 0, 1, 2, or 3.
+     * Halfword writes (HSIZE=1): assert lanes 1:0 or 3:2.
+     * Word writes (HSIZE=2): assert all lanes 3:0.
+   - Enables binary file uploads ('U') and byte-level memory modifications.
+
+d) ADP Controller Reversion to Original Standard IO Check Mode:
+   - Preserved original protocol requirement in 'socdebug_adp_control.v':
+     * Board outputs banner ' 0x50c1ab04\r\n' and enters 'STD_IOCHK'.
+     * User enters ADP command mode by sending '<ESC>' (0x1B in HEX).
+     * User exits back to terminal passthrough with 'X'.
+   - Added reference comments and line tags (lines 137 & 737) to facilitate
+     enabling auto-prompting on boot without '<ESC>' if desired in the future.
+
+e) Bare-Metal RV32I Factorial Demo Program (software/factorial.S):
+   - Pure RV32I bare-metal assembly implementation computing n! without relying
+     on hardware multiplier (M extension) or C runtime libraries.
+   - Reads input 'n' from Data RAM 0x80002000, writes result to 0x80002004.
+   - 76 bytes total (0x4C bytes), compiled via riscv64-unknown-elf-gcc.
+   - Fully verified end-to-end via ADP 'F' (fill), 'U' (upload), 'C' (halt/reset/resume),
+     and 'R' (result readback).
+
+f) AHB Mux Arbiter Resume Deadlock Fix (ahb_mux.sv):
+   - Problem: In 'ahb_mux.sv', when 'core_halt' was deasserted, the grant logic
+     checked 'if (m0_req) next_grant_addr = 0; else if (m1_req) next_grant_addr = 1; else next_grant_addr = grant_addr;'.
+     Because 'grant_addr' was 1 (from previous debugger operations), Master 0
+     saw 'M0_HREADY = 0'. Under the CORE-V Wally 'busfsm', instruction fetch
+     transactions ('m0_req') are gated by 'HREADY == 1'. Thus, the CPU core
+     could not assert 'm0_req', while the arbiter refused to grant the bus to
+     Master 0 without 'm0_req', causing a permanent bus deadlock upon resume.
+   - Solution: In 'ahb_mux.sv', whenever Debugger is idle ('m1_req == 0'),
+     'next_grant_addr' now defaults unconditionally to '1'b0' (Master 0).
+     This guarantees that Master 0 receives 'HREADY = 1' immediately upon core
+     resume, allowing the CPU to start instruction fetching without delay.
+================================================================================
+
+

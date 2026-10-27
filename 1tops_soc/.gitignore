@@ -1,0 +1,57 @@
+# =============================================================================
+# RISC-V Pipelined Processor .gitignore
+# =============================================================================
+
+# Quartus compilation and project outputs
+output_files/
+db/
+incremental_db/
+simulation/
+*.qws
+*.qdf
+*.rpt
+*.sof
+*.pof
+*.done
+*.smsg
+*.summary
+*.jdi
+*.sld
+*.sta.rpt
+*.sta.summary
+*.map.rpt
+*.map.summary
+*.fit.rpt
+*.fit.summary
+*.flow.rpt
+
+# QuestaSim / ModelSim simulation artifacts
+work/
+rtl_work/
+transcript*
+msim_transcript*
+vsim.wlf
+*.wlf
+modelsim.ini
+*.vcd
+*.vpd
+
+# Test and Compiler build artifacts
+build/
+*.elf
+*.bin
+*.hex
+*.objdump
+*.dump
+*.o
+*.a
+
+# Python cache & OS files
+__pycache__/
+*.py[cod]
+*$py.class
+*.swp
+*.swo
+*~
+*.bak*
+.DS_Store

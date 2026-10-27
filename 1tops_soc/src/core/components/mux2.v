@@ -1,5 +1,3 @@
-`ifndef MUX2_DEFINED
-`define MUX2_DEFINED
 module mux2 #(parameter WIDTH = 8) (
     input       [WIDTH-1:0] d0, d1,
     input       sel,
@@ -9,5 +7,3 @@ module mux2 #(parameter WIDTH = 8) (
 assign y = sel ? d1 : d0;
 
 endmodule
-`endif
-

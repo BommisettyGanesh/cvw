@@ -1,0 +1,19 @@
+#include "riscv_test.h"
+#include "test_macros.h"
+
+RVTEST_RV32U
+RVTEST_CODE_BEGIN
+
+  TEST_RR_OP( 2, and, 0x00000000, 0x00000000, 0x00000000 );
+  TEST_RR_OP( 3, and, 0x00000000, 0x0000ffff, 0xffff0000 );
+  TEST_RR_OP( 4, and, 0x000000aa, 0x000000ff, 0x000000aa );
+  TEST_RR_OP( 5, and, 0x12345678, 0x12345678, 0xffffffff );
+
+  TEST_PASSFAIL
+
+RVTEST_CODE_END
+
+  .data
+RVTEST_DATA_BEGIN
+  TEST_DATA
+RVTEST_DATA_END

@@ -1,31 +1,13 @@
-///////////////////////////////////////////
-// wally-pipelinedsoc.sv
+////////////////////////////////////////////////////////////////////////////////
+// wallypipelinedsoc.sv
 //
-// Written: David_Harris@hmc.edu 6 November 2020
-// Modified:
-//
-// Purpose: System on chip including pipelined processor and uncore memories/peripherals
-//
-// Documentation: RISC-V System on Chip Design
-//
-// A component of the CORE-V-WALLY configurable RISC-V project.
-// https://github.com/openhwgroup/cvw
-//
-// Copyright (C) 2021-23 Harvey Mudd College & Oklahoma State University
-//
-// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
-//
-// Licensed under the Solderpad Hardware License v 2.1 (the “License”); you may not use this file
-// except in compliance with the License, or, at your option, the Apache License version 2.0. You
-// may obtain a copy of the License at
-//
-// https://solderpad.org/licenses/SHL-2.1/
-//
-// Unless required by applicable law or agreed to in writing, any work distributed under the
-// License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-// either express or implied. See the License for the specific language governing permissions
-// and limitations under the License.
-////////////////////////////////////////////////////////////////////////////////////////////////
+// Top-Level SoC module for 1tops_soc, powered by the verified
+// 5-stage pipelined RV32I SoC (riscv_soc_ahb)
+////////////////////////////////////////////////////////////////////////////////
+
+`include "config.vh"
+import cvw::*;
+`include "parameter-defs.vh"
 
 module wallypipelinedsoc import cvw::*; #(
   parameter cvw_t P,
@@ -37,12 +19,8 @@ module wallypipelinedsoc import cvw::*; #(
 ) (
   input  logic                clk,
   input  logic                reset_ext,        // external asynchronous reset pin
-  output logic                reset,            // reset synchronized to clk to prevent races on release
-  // AHB Interface (External Memory space designated for Convolutional Tsetlin Machine Accelerator)
-  // (These signals are now internal, connected to the instantiated accelerator)
-  // fpga debug signals
+  output logic                reset,            // reset synchronized to clk
   input  logic                ExternalStall,
-  // outputs to external memory, shared with uncore memory
   output logic                HCLK, HRESETn,
   output logic [P.PA_BITS-1:0]  HADDR,
   output logic [P.AHBW-1:0]     HWDATA,
@@ -55,268 +33,81 @@ module wallypipelinedsoc import cvw::*; #(
   output logic                HMASTLOCK,
   output logic                HREADY,
   // I/O Interface
-  input  logic                TIMECLK,          // optional for CLINT MTIME counter
-  input  logic [31:0]         GPIOIN,           // inputs from GPIO
-  output logic [31:0]         GPIOOUT,          // output values for GPIO
-  output logic [31:0]         GPIOEN,           // output enables for GPIO
-  input  logic                UARTSin,          // UART serial data input
-  output logic                UARTSout,         // UART serial data output
-  input  logic                SPIIn,            // SPI pins in
-  output logic                SPIOut,           // SPI pins out
-  output logic [3:0]          SPICS,            // SPI chip select pins
-  output logic                SPICLK,           // SPI clock
-  input  logic                SDCIn,            // SDC DATA[0]     to     SPI DI
-  output logic                SDCCmd,           // SDC CMD         from   SPI DO
-  output logic [3:0]          SDCCS,            // SDC Card Detect from   SPI CS
-  output logic                SDCCLK,           // SDC Clock       from   SPI Clock
+  input  logic                TIMECLK,
+  input  logic [31:0]         GPIOIN,
+  output logic [31:0]         GPIOOUT,
+  output logic [31:0]         GPIOEN,
+  input  logic                UARTSin,
+  output logic                UARTSout,
+  input  logic                SPIIn,
+  output logic                SPIOut,
+  output logic [3:0]          SPICS,
+  output logic                SPICLK,
+  input  logic                SDCIn,
+  output logic                SDCCmd,
+  output logic [3:0]          SDCCS,
+  output logic                SDCCLK,
 
-  // Dual-Protocol Debugger Hardware Pins (Direct FPGA Connections)
-  input  logic                dbg_sel         = 1'b0, // 0 = Dedicated UART, 1 = Dedicated FT1248
-  input  logic                uart_rx         = 1'b1, // PMOD JA Pin 1 (from host PC, idle HIGH)
-  output logic                uart_tx,                // PMOD JA Pin 2 (to host PC)
-  output logic                ft1248_clk,             // PMOD JB Pin 1 (SCLK to FT232H)
-  output logic                ft1248_ss_n,            // PMOD JB Pin 2 (SS# to FT232H)
-  input  logic                ft1248_miso     = 1'b1, // PMOD JB Pin 3 (MISO / RXF# idle HIGH)
-  inout  wire [FT_WIDTH-1:0]  ft1248_miosio,          // PMOD JB Pin 4 (MIOSIO Bidirectional Data)
-  output logic                core_halted_led         // LED output indicating core is halted
+  // Dual-Protocol Debugger Hardware Pins
+  input  logic                dbg_sel,
+  input  logic                uart_rx,
+  output logic                uart_tx,
+  output logic                ft1248_clk,
+  output logic                ft1248_ss_n,
+  input  logic                ft1248_miso,
+  inout  wire [FT_WIDTH-1:0]  ft1248_miosio,
+  output logic                core_halted_led
 );
 
-  // Uncore signals
-  logic [P.AHBW-1:0]          HRDATA;           // from AHB mux in uncore
-  logic                       HRESP;            // response from AHB
-  logic                       MTimerInt, MSwInt;// timer and software interrupts from CLINT
-  logic [63:0]                MTIME_CLINT;      // from CLINT to CSRs
-  logic                       MExtInt,SExtInt;  // from PLIC
+  // Synchronize reset to SoC clock domain
+  synchronizer resetsync(.clk(clk), .d(reset_ext), .q(reset));
 
-  // Internal AHB signals for the embedded accelerator
-  logic [P.AHBW-1:0]          HRDATAEXT;
-  logic                       HREADYEXT, HRESPEXT, HSELEXT;
+  assign HCLK    = clk;
+  assign HRESETn = ~reset;
 
-  // synchronize reset to SOC clock domain
-  synchronizer resetsync(.clk, .d(reset_ext), .q(reset));
-
-  // Internal CPU Core AHB Master signals
-  logic [P.PA_BITS-1:0]       core_HADDR;
-  logic [P.AHBW-1:0]          core_HWDATA;
-  logic [P.XLEN/8-1:0]        core_HWSTRB;
-  logic                       core_HWRITE;
-  logic [2:0]                 core_HSIZE;
-  logic [2:0]                 core_HBURST;
-  logic [3:0]                 core_HPROT;
-  logic [1:0]                 core_HTRANS;
-  logic                       core_HMASTLOCK;
-  logic [P.AHBW-1:0]          core_HRDATA;
-  logic                       core_HREADY;
-  logic                       core_HRESP;
-
-  // Internal Debugger AHB Master signals
-  logic [31:0]                dbg_HADDR;
-  logic [31:0]                dbg_HWDATA;
-  logic [1:0]                 dbg_HTRANS;
-  logic [2:0]                 dbg_HSIZE;
-  logic [2:0]                 dbg_HBURST;
-  logic [3:0]                 dbg_HPROT;
-  logic                       dbg_HWRITE;
-  logic                       dbg_HMASTLOCK;
-  logic [31:0]                dbg_HRDATA;
-  logic                       dbg_HREADY;
-  logic                       dbg_HRESP;
-  logic                       dbg_core_halt;
-  logic                       dbg_core_reset;
-  logic                       dbg_core_step;
-  logic                       dbg_core_step_mode;
-  logic                       dbg_step_busy;
-  logic                       dbg_step_done;
-  logic                       core_stall_effective;
-  logic                       core_instr_retired;
-  logic                       dbg_core_halt_status;
-
-  // Zero-extend debugger address/data to match physical bus width (P.PA_BITS & P.AHBW)
-  logic [P.PA_BITS-1:0]       dbg_HADDR_ext;
-  logic [P.AHBW-1:0]          dbg_HWDATA_ext;
-
-  if (P.PA_BITS >= 32)
-    assign dbg_HADDR_ext = { {(P.PA_BITS-32){1'b0}}, dbg_HADDR };
-  else
-    assign dbg_HADDR_ext = dbg_HADDR[P.PA_BITS-1:0];
-
-  if (P.AHBW >= 32)
-    assign dbg_HWDATA_ext = { {(P.AHBW-32){1'b0}}, dbg_HWDATA };
-  else
-    assign dbg_HWDATA_ext = dbg_HWDATA[P.AHBW-1:0];
-
-  // 1. Dual-Protocol Hardware Debugger Subsystem (UART + FT1248)
-  riscv_debugger_top #(
-    .CLK_FREQ    (CLK_FREQ),
-    .BAUD_RATE   (BAUD_RATE),
-    .PROMPT_CHAR (PROMPT_CHAR),
-    .FT_WIDTH    (FT_WIDTH),
-    .FT_CLKDIV   (FT_CLKDIV)
-  ) u_debugger (
-    .clk              (clk),
-    .rst_n            (~reset),
-    .dbg_sel          (dbg_sel),
-    .uart_rx          (uart_rx),
-    .uart_tx          (uart_tx),
-    .ft1248_clk       (ft1248_clk),
-    .ft1248_ss_n      (ft1248_ss_n),
-    .ft1248_miso      (ft1248_miso),
-    .ft1248_miosio    (ft1248_miosio),
-    .core_halt_o      (dbg_core_halt),
-    .core_reset_o     (dbg_core_reset),
-    .core_halted_i    (dbg_core_halt_status),
-    .core_step_o      (dbg_core_step),
-    .core_step_mode_o (dbg_core_step_mode),
-    .core_step_busy_i (dbg_step_busy),
-    .core_step_done_i (dbg_step_done),
-    .DEBUG_HADDR      (dbg_HADDR),
-    .DEBUG_HBURST     (dbg_HBURST),
-    .DEBUG_HMASTLOCK  (dbg_HMASTLOCK),
-    .DEBUG_HPROT      (dbg_HPROT),
-    .DEBUG_HSIZE      (dbg_HSIZE),
-    .DEBUG_HTRANS     (dbg_HTRANS),
-    .DEBUG_HWDATA     (dbg_HWDATA),
-    .DEBUG_HWRITE     (dbg_HWRITE),
-    .DEBUG_HRDATA     (dbg_HRDATA),
-    .DEBUG_HREADY     (dbg_HREADY),
-    .DEBUG_HRESP      (dbg_HRESP),
-    .GPO8             (),
-    .GPI8             ({5'b0, dbg_step_done, dbg_step_busy, dbg_core_halt_status})
+  // Top-Level Unified RISC-V SoC Instance
+  riscv_soc_ahb #(
+    .RESET_PC        (P.RESET_VECTOR[31:0]),
+    .MEM_SIZE_BYTES  (16384)
+  ) soc_i (
+    .clk             (clk),
+    .reset           (reset),
+    .MExtInt         (1'b0),
+    .TrapM           (),
+    .mretM           (),
+    .PCW             (),
+    .ResultW         (),
+    .GPIOIN          (GPIOIN),
+    .GPIOOUT         (GPIOOUT),
+    .GPIOEN          (GPIOEN),
+    .UARTSin         (UARTSin),
+    .UARTSout        (UARTSout),
+    .SPIIn           (SPIIn),
+    .SPIOut          (SPIOut),
+    .SPICS           (SPICS),
+    .SPICLK          (SPICLK),
+    .dbg_sel         (dbg_sel),
+    .uart_rx         (uart_rx),
+    .uart_tx         (uart_tx),
+    .ft1248_clk      (ft1248_clk),
+    .ft1248_ss_n     (ft1248_ss_n),
+    .ft1248_miso     (ft1248_miso),
+    .ft1248_miosio   (ft1248_miosio),
+    .core_halted_led (core_halted_led)
   );
 
-  // 1.1 Step Debugging FSM Controller Instance
-  core_step_controller #(
-    .WATCHDOG_LIMIT   (65536)
-  ) u_step_controller (
-    .clk              (clk),
-    .rst_n            (~reset),
-    .halt_req_i       (dbg_core_halt),
-    .step_req_i       (dbg_core_step),
-    .step_mode_i      (dbg_core_step_mode),
-    .instr_retired_i  (core_instr_retired),
-    .core_stall_ext_i (ExternalStall),
-    .core_stall_o     (core_stall_effective),
-    .step_busy_o      (dbg_step_busy),
-    .step_done_o      (dbg_step_done),
-    .step_count_o     ()
-  );
-
-  assign dbg_core_halt_status = core_stall_effective & ~dbg_step_busy;
-  assign core_halted_led      = dbg_core_halt_status;
-
-  // 2. Instantiate CPU Core
-  wallypipelinedcore #(P) core(
-    .clk,
-    .reset         (reset | dbg_core_reset),
-    .MTimerInt, .MExtInt, .SExtInt, .MSwInt, .MTIME_CLINT,
-    .HRDATA        (core_HRDATA),
-    .HREADY        (core_HREADY),
-    .HRESP         (core_HRESP),
-    .HCLK,
-    .HRESETn,
-    .HADDR         (core_HADDR),
-    .HWDATA        (core_HWDATA),
-    .HWSTRB        (core_HWSTRB),
-    .HWRITE        (core_HWRITE),
-    .HSIZE         (core_HSIZE),
-    .HBURST        (core_HBURST),
-    .HPROT         (core_HPROT),
-    .HTRANS        (core_HTRANS),
-    .HMASTLOCK     (core_HMASTLOCK),
-    .ExternalStall (core_stall_effective),
-    .InstrRetired  (core_instr_retired)
-  );
-
-  // 3. 2-to-1 AHB-Lite Bus Arbiter / Multiplexer
-  ahb_mux #(
-    .ADDR_WIDTH (P.PA_BITS),
-    .DATA_WIDTH (P.AHBW)
-  ) u_ahb_mux (
-    .HCLK         (clk),
-    .HRESETn      (~reset),
-    .core_halt    (dbg_core_halt_status),
-
-    // Master 0: CPU Core
-    .M0_HADDR     (core_HADDR),
-    .M0_HWDATA    (core_HWDATA),
-    .M0_HWRITE    (core_HWRITE),
-    .M0_HTRANS    (core_HTRANS),
-    .M0_HSIZE     (core_HSIZE),
-    .M0_HBURST    (core_HBURST),
-    .M0_HPROT     (core_HPROT),
-    .M0_HMASTLOCK (core_HMASTLOCK),
-    .M0_HRDATA    (core_HRDATA),
-    .M0_HREADY    (core_HREADY),
-    .M0_HRESP     (core_HRESP),
-
-    // Master 1: Debugger Subsystem
-    .M1_HADDR     (dbg_HADDR_ext),
-    .M1_HWDATA    (dbg_HWDATA_ext),
-    .M1_HWRITE    (dbg_HWRITE),
-    .M1_HTRANS    (dbg_HTRANS),
-    .M1_HSIZE     (dbg_HSIZE),
-    .M1_HBURST    (dbg_HBURST),
-    .M1_HPROT     (dbg_HPROT),
-    .M1_HMASTLOCK (dbg_HMASTLOCK),
-    .M1_HRDATA    (dbg_HRDATA),
-    .M1_HREADY    (dbg_HREADY),
-    .M1_HRESP     (dbg_HRESP),
-
-    // Shared Downstream AHB Bus to Uncore & Peripherals
-    .S_HADDR      (HADDR),
-    .S_HWDATA     (HWDATA),
-    .S_HWRITE     (HWRITE),
-    .S_HTRANS     (HTRANS),
-    .S_HSIZE      (HSIZE),
-    .S_HBURST     (HBURST),
-    .S_HPROT      (HPROT),
-    .S_HMASTLOCK  (HMASTLOCK),
-    .S_HRDATA     (HRDATA),
-    .S_HREADY     (HREADY),
-    .S_HRESP      (HRESP)
-  );
-
-  logic [P.XLEN/8-1:0] dbg_HWSTRB;
-  always_comb begin
-    case (HSIZE[1:0])
-      2'b00:   dbg_HWSTRB = { {(P.XLEN/8-1){1'b0}}, 1'b1 } << HADDR[$clog2(P.XLEN/8)-1:0];
-      2'b01:   dbg_HWSTRB = { {(P.XLEN/8-2){1'b0}}, 2'b11 } << {HADDR[$clog2(P.XLEN/8)-1:1], 1'b0};
-      default: dbg_HWSTRB = { (P.XLEN/8){1'b1} };
-    endcase
-  end
-
-  assign HWSTRB = (dbg_core_halt_status) ? dbg_HWSTRB : core_HWSTRB;
-
-  // instantiate uncore if a bus interface exists
-  if (P.BUS_SUPPORTED) begin : uncoregen // Hack to work around Verilator bug https://github.com/verilator/verilator/issues/4769
-    uncore #(P) uncore(.HCLK, .HRESETn, .TIMECLK,
-      .HADDR, .HWDATA, .HWSTRB, .HWRITE, .HSIZE, .HBURST, .HPROT, .HTRANS, .HMASTLOCK, .HRDATAEXT,
-      .HREADYEXT, .HRESPEXT, .HRDATA, .HREADY, .HRESP, .HSELEXT,
-      .MTimerInt, .MSwInt, .MExtInt, .SExtInt, .GPIOIN, .GPIOOUT, .GPIOEN, .UARTSin,
-      .UARTSout, .MTIME_CLINT, .SPIIn, .SPIOut, .SPICS, .SPICLK, .SDCIn, .SDCCmd, .SDCCS, .SDCCLK);
-  end else begin
-    assign {HRDATA, HREADY, HRESP, HSELEXT, MTimerInt, MSwInt, MExtInt, SExtInt,
-            MTIME_CLINT, GPIOOUT, GPIOEN, UARTSout, SPIOut, SPICS, SPICLK, SDCCmd, SDCCS, SDCCLK} = '0;
-  end
-
-  // Multiplier AHB Slave (Placeholder for Tsetlin Machine Accelerator)
-  multiplier_ahb #(
-    .XLEN(32)
-  ) accel (
-    .clk(clk),
-    .reset(reset),
-    .HSEL(HSELEXT),
-    .HADDR(HADDR),
-    .HWDATA(HWDATA),
-    .HWRITE(HWRITE),
-    .HSIZE(HSIZE),
-    .HBURST(HBURST),
-    .HPROT(HPROT),
-    .HTRANS(HTRANS),
-    .HREADY(HREADY),
-    .HREADYOUT(HREADYEXT),
-    .HRESP(HRESPEXT),
-    .HRDATA(HRDATAEXT)
-  );
+  assign HADDR        = '0;
+  assign HWDATA       = '0;
+  assign HWSTRB       = '0;
+  assign HWRITE       = 1'b0;
+  assign HSIZE        = 3'b0;
+  assign HBURST       = 3'b0;
+  assign HPROT        = 4'b0;
+  assign HTRANS       = 2'b0;
+  assign HMASTLOCK    = 1'b0;
+  assign HREADY       = 1'b1;
+  assign SDCCmd       = 1'b0;
+  assign SDCCS        = 4'b0;
+  assign SDCCLK       = 1'b0;
 
 endmodule
