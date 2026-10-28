@@ -25,15 +25,16 @@ Because the on-chip debugger is an independent **AHB-Lite Bus Master**, you have
 
 | Peripheral / Space | Base Address | Range / Size | Purpose | Source Reference |
 | :--- | :--- | :--- | :--- | :--- |
-| **Boot ROM** | `0x0000_1000` | 4 KB | Reset execution / bootloader | [`src/uncore/rom_ahb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/rom_ahb.sv) |
-| **CLINT** | `0x0200_0000` | 64 KB | Software interrupts (`msip`), Timer (`mtime`, `mtimecmp`) | [`src/uncore/clint_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/clint_apb.sv) |
-| **PLIC** | `0x0C00_0000` | 64 MB | Platform-Level Interrupt Controller | [`src/uncore/plic_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/plic_apb.sv) |
-| **16550 UART** | `0x1000_0000` | 8 Bytes | TI PC16550D UART with FIFOs & Loopback | [`src/uncore/uart_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/uart_apb.sv) |
-| **SPI Controller** | `0x1004_0000` | 4 KB | SiFive FU540-compatible SPI master | [`src/uncore/spi_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/spi_apb.sv) |
-| **GPIO** | `0x1006_0000` | 256 Bytes | 32-bit GPIO with XOR inversion & edge detection | [`src/uncore/gpio_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/gpio_apb.sv) |
-| **1TOPS Accelerator** | `0x3000_0000` | 16 MB | Neural Network Multiplier / Matrix Engine | [`src/accelerator/`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/accelerator/) |
-| **Instruction RAM (IRAM)** | `0x8000_0000` | 8 KB | CPU code execution space (Reset Vector) | [`src/uncore/ram_ahb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/ram_ahb.sv) |
-| **Data RAM (DRAM)** | `0x8000_2000` | 8 KB | Scratchpad variables, stack, I/O mailboxes | [`src/uncore/ram_ahb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/src/uncore/ram_ahb.sv) |
+| **Boot ROM** | `0x0000_1000` | 4 KB | Reset execution / bootloader | [`../src2/uncore/rom_ahb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/rom_ahb.sv) |
+| **CLINT** | `0x0200_0000` | 64 KB | Software interrupts (`msip`), Timer (`mtime`, `mtimecmp`) | [`../src2/uncore/clint_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/clint_apb.sv) |
+| **Post-Mortem Debug** | `0x0B00_0000` | 4 KB | Post-Mortem GPRs, CSRs, Micro-Trace & Crash Latches | [`../src2/debugger/core_debug_ahb.v`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/core_debug_ahb.v) |
+| **PLIC** | `0x0C00_0000` | 64 MB | Platform-Level Interrupt Controller | [`../src2/uncore/plic_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/plic_apb.sv) |
+| **16550 UART** | `0x1000_0000` | 8 Bytes | TI PC16550D UART with FIFOs & Loopback | [`../src2/uncore/uart_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/uart_apb.sv) |
+| **SPI Controller** | `0x1004_0000` | 4 KB | SiFive FU540-compatible SPI master | [`../src2/uncore/spi_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/spi_apb.sv) |
+| **GPIO** | `0x1006_0000` | 256 Bytes | 32-bit GPIO with XOR inversion & edge detection | [`../src2/uncore/gpio_apb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/gpio_apb.sv) |
+| **1TOPS Accelerator** | `0x3000_0000` | 16 MB | Neural Network Multiplier / Matrix Engine | [`../src2/main/soc/multiplier_ahb.v`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/main/soc/multiplier_ahb.v) |
+| **Instruction RAM (IRAM)** | `0x8000_0000` | 8 KB | CPU code execution space (Reset Vector) | [`../src2/uncore/ram_ahb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/ram_ahb.sv) |
+| **Data RAM (DRAM)** | `0x8000_2000` | 8 KB | Scratchpad variables, stack, I/O mailboxes | [`../src2/uncore/ram_ahb.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/uncore/ram_ahb.sv) |
 
 ---
 

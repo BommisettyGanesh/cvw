@@ -1,46 +1,19 @@
-///////////////////////////////////////////
 // spi_apb.sv
-//
-// Written: Naiche Whyte-Aguayo nwhyteaguayo@g.hmc.edu
-//          Jacob Pease jacobpease@protonmail.com (October 29th, 2024)
-// Created: November 16th, 2022
-//
 // Purpose: SPI peripheral
-//
-// SPI module is written to the specifications described in FU540-C000-v1.0. At the top level, it is consists of synchronous 8 byte transmit and receive FIFOs connected to shift registers.
-// The FIFOs are connected to WALLY by an apb control register interface, which includes various control registers for modifying the SPI transmission along with registers for writing
-// to the transmit FIFO and reading from the receive FIFO. The transmissions themselves are then controlled by a finite state machine. The SPI module uses 4 tristate pins for SPI input/output,
-// along with a 4 bit Chip Select signal, a clock signal, and an interrupt signal to WALLY.
-// Current limitations: Flash read sequencer mode not implemented, dual and quad mode not supported
-//
-// A component of the Wally configurable RISC-V project.
-//
-// Copyright (C) 2021-24 Harvey Mudd College & Oklahoma State University
-//
-// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
-//
-// Licensed under the Solderpad Hardware License v 2.1 (the “License”); you may not use this file
-// except in compliance with the License, or, at your option, the Apache License version 2.0. You
-// may obtain a copy of the License at
-//
-// https://solderpad.org/licenses/SHL-2.1/
-//
-// Unless required by applicable law or agreed to in writing, any work distributed under the
-// License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-// either express or implied. See the License for the specific language governing permissions
-// and limitations under the License.
-////////////////////////////////////////////////////////////////////////////////////////////////
 
-module spi_apb import cvw::*; #(parameter cvw_t P) (
+module spi_apb #(
+  parameter XLEN = 32,
+  parameter SPI_LOOPBACK_TEST = 0
+)(
   input  logic                PCLK, PRESETn,
   input  logic                PSEL,
   input  logic [7:0]          PADDR,
-  input  logic [P.XLEN-1:0]   PWDATA,
-  input  logic [P.XLEN/8-1:0] PSTRB,
+  input  logic [XLEN-1:0]     PWDATA,
+  input  logic [XLEN/8-1:0]   PSTRB,
   input  logic                PWRITE,
   input  logic                PENABLE,
   output logic                PREADY,
-  output logic [P.XLEN-1:0]   PRDATA,
+  output logic [XLEN-1:0]     PRDATA,
   output logic                SPIOut,
   input  logic                SPIIn,
   output logic [3:0]          SPICS,
@@ -144,8 +117,7 @@ module spi_apb import cvw::*; #(parameter cvw_t P) (
   // -- Note SPI registers are 32 bits no matter what; access them with LW SW.
 
   assign Din = PWDATA[31:0];
-  if (P.XLEN == 64) assign PRDATA = { Dout,  Dout};
-  else              assign PRDATA =  Dout;
+  assign PRDATA = (XLEN == 64) ? {Dout, Dout} : Dout;
 
   // Register access
   always_ff@(posedge PCLK)
@@ -228,14 +200,16 @@ module spi_apb import cvw::*; #(parameter cvw_t P) (
   // Transmit FIFO ---------------------------------------------------
 
   // txFIFO write increment logic
-  flopr #(1) txwincreg(PCLK, ~PRESETn,
-                       (Memwrite & (Entry == SPI_TXDATA) & ~TransmitFIFOFull),
-                       TransmitFIFOWriteInc);
+  always_ff @(posedge PCLK or negedge PRESETn) begin
+    if (~PRESETn) TransmitFIFOWriteInc <= 1'b0;
+    else          TransmitFIFOWriteInc <= (Memwrite & (Entry == SPI_TXDATA) & ~TransmitFIFOFull);
+  end
 
   // txFIFO read increment logic
-  flopenr #(1) txrincreg(PCLK, ~PRESETn, SCLKenable,
-                         TransmitStartD | (EndOfFrame & ~TransmitFIFOEmpty),
-                         TransmitFIFOReadInc);
+  always_ff @(posedge PCLK or negedge PRESETn) begin
+    if (~PRESETn)        TransmitFIFOReadInc <= 1'b0;
+    else if (SCLKenable) TransmitFIFOReadInc <= TransmitStartD | (EndOfFrame & ~TransmitFIFOEmpty);
+  end
 
   // Check whether TransmitReg has been loaded.
   // We use this signal to prevent returning to the Ready state for TransmitStart
@@ -286,13 +260,16 @@ module spi_apb import cvw::*; #(parameter cvw_t P) (
   // Receive FIFO ----------------------------------------------------
 
   // Receive FIFO Read Increment register
-  flopr #(1) rxfiforincreg(PCLK, ~PRESETn,
-                           ((Entry == SPI_RXDATA) & ~ReceiveFIFOEmpty & PSEL & ~ReceiveFIFOReadInc),
-                           ReceiveFIFOReadInc);
+  always_ff @(posedge PCLK or negedge PRESETn) begin
+    if (~PRESETn) ReceiveFIFOReadInc <= 1'b0;
+    else          ReceiveFIFOReadInc <= ((Entry == SPI_RXDATA) & ~ReceiveFIFOEmpty & PSEL & ~ReceiveFIFOReadInc);
+  end
 
   // Receive FIFO Write Increment register
-  flopenr #(1) rxfifowincreg(PCLK, ~PRESETn, SCLKenable,
-                             EndOfFrame, ReceiveFIFOWriteInc);
+  always_ff @(posedge PCLK or negedge PRESETn) begin
+    if (~PRESETn)        ReceiveFIFOWriteInc <= 1'b0;
+    else if (SCLKenable) ReceiveFIFOWriteInc <= EndOfFrame;
+  end
 
   // Receive FIFO
   spi_fifo #(3,8) rxFIFO(PCLK, SCLKenable, 1'b1, PRESETn,
@@ -307,7 +284,9 @@ module spi_apb import cvw::*; #(parameter cvw_t P) (
   // Shift Registers --------------------------------------------------
   // Transmit shift register
   assign TransmitLoad = TransmitStart | (EndOfFrame & ~TransmitFIFOEmpty);
-  assign TransmitDataEndian = Format[0] ? {<<{TransmitReadData[7:0]}} : TransmitReadData[7:0];
+  wire [7:0] TransmitReadDataReversed = {TransmitReadData[0], TransmitReadData[1], TransmitReadData[2], TransmitReadData[3],
+                                         TransmitReadData[4], TransmitReadData[5], TransmitReadData[6], TransmitReadData[7]};
+  assign TransmitDataEndian = Format[0] ? TransmitReadDataReversed : TransmitReadData[7:0];
   always_ff @(posedge PCLK)
     if(~PRESETn)            TransmitReg <= 8'b0;
     else if (TransmitLoad)  TransmitReg <= TransmitDataEndian;
@@ -319,7 +298,7 @@ module spi_apb import cvw::*; #(parameter cvw_t P) (
   // to module's output pins. Else, connected to SPIIn. There are no
   // setup/hold time issues because transmit shift register and receive
   // shift register always shift/sample on opposite edges
-  assign ShiftIn = P.SPI_LOOPBACK_TEST ? SPIOut : SPIIn;
+  assign ShiftIn = SPI_LOOPBACK_TEST ? SPIOut : SPIIn;
 
   // Receive shift register
   always_ff @(posedge PCLK)
@@ -332,7 +311,8 @@ module spi_apb import cvw::*; #(parameter cvw_t P) (
   // Aligns received data and reverses if little-endian
   assign LeftShiftAmount = 4'h8 - FrameLength;
   assign ASR = ReceiveShiftReg << LeftShiftAmount[2:0];
-  assign ReceiveShiftRegEndian = Format[0] ? {<<{ASR[7:0]}} : ASR[7:0];
+  wire [7:0] ASRReversed = {ASR[0], ASR[1], ASR[2], ASR[3], ASR[4], ASR[5], ASR[6], ASR[7]};
+  assign ReceiveShiftRegEndian = Format[0] ? ASRReversed : ASR[7:0];
 
   // Interrupt logic: raise interrupt if any enabled interrupts are pending
   assign SPIIntr = |(InterruptPending & InterruptEnable);

@@ -1,6 +1,6 @@
 # SoCDebug ASCII Debug Protocol (ADP) — Complete Command Reference
 
-This document is a comprehensive cheatsheet of all commands supported by the **SoCDebug ADP Controller** (`socdebug_adp_control.v`) in `src/debugger/`.
+This document is a comprehensive cheatsheet of all commands supported by the **SoCDebug ADP Controller** (`socdebug_adp_control.v`) in `src2/debugger/`.
 
 All commands are case-insensitive (e.g., `a` or `A`, `r` or `R`) and must be terminated with a newline (`<ENTER>` / `\n` / `\r`).
 

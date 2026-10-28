@@ -179,7 +179,7 @@ Each protocol interface has its own independent external pins connected to real 
 
 ## 3. Protocol Isolation & 2-to-1 Multiplexer Operation
 
-The 2-to-1 stream multiplexer resides inside [`riscv_debugger_top.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src/debugger/riscv_debugger_top.sv) and guarantees complete electrical and functional isolation:
+The 2-to-1 stream multiplexer resides inside [`riscv_debugger_top.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/riscv_debugger_top.sv) and guarantees complete electrical and functional isolation:
 
 ```verilog
 assign adp_rx_data  = (dbg_sel == 1'b0) ? uart_adp_rx_data  : ft_adp_rx_data;
@@ -296,8 +296,8 @@ To monitor incoming serial traffic on PMOD JA without creating combinational loo
 The testbench compiles and executes cleanly under **QuestaSim-64 2023.4_5**:
 
 ```bash
-cd /home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src/debugger
-vlog -sv socdebug_adp_control.v socdebug_ahb.v socdebug_uart.v socdebug_ft1248_control.v core_step_controller.sv riscv_debugger_top.sv ahb_mux.sv ../accelerator/multiplier_ahb.sv tb/f232h_ft1248_stream.v tb/tb_debugger.sv
+cd /home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger
+vlog -sv socdebug_adp_control.v socdebug_ahb.v socdebug_uart.v socdebug_ft1248_control.v core_step_controller.sv riscv_debugger_top.sv ahb_mux.sv ../main/soc/multiplier_ahb.v tb/f232h_ft1248_stream.v tb/tb_debugger.sv
 vsim -c -do "run -all; quit" tb_debugger
 ```
 
@@ -330,7 +330,7 @@ vsim -c -do "run -all; quit" tb_debugger
 
 ## 7. Software Utilities (`sw/dbg_cli.py`)
 
-A unified Python CLI utility is available in [`sw/dbg_cli.py`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src/debugger/sw/dbg_cli.py):
+A unified Python CLI utility is available in [`sw/dbg_cli.py`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/sw/dbg_cli.py):
 
 ```bash
 # View all available commands and help

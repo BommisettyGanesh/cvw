@@ -12,8 +12,8 @@ cd "$SCRIPT_DIR"
 
 echo "=========================================================================="
 echo "Launching RTLvision PRO GUI for 1TOPS SoC..."
-echo "Top Module: wallypipelinedsocwrapper"
+echo "Top Module: riscv_soc_ahb (from src2/main/soc/riscv_soc_ahb.v)"
 echo "Working Directory: $SCRIPT_DIR"
 echo "=========================================================================="
 
-rtlvisionpro -sv -top wallypipelinedsocwrapper -f files.f -logfile rtlvision.log "$@" &
+rtlvisionpro -sv -top riscv_soc_ahb -f files.f -logfile rtlvision.log "$@" &

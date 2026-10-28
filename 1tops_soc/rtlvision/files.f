@@ -1,96 +1,70 @@
 // -----------------------------------------------------------------------------
 // RTLvision PRO Filelist for CORE-V Wally RV32 SoC (1tops_soc)
-// Upgraded with 5-Stage Pipelined RV32I Core & Retained Uncore Subsystem
+// Sourced strictly from: 1tops_soc/src2/
 // -----------------------------------------------------------------------------
 
 // Include directories
-+incdir+../config
-+incdir+../src
-+incdir+../schematics
-+incdir+../src/debugger
-+incdir+../src/core
-+incdir+../src/core/components
++incdir+../src2/components
++incdir+../src2/debugger
++incdir+../src2/main
++incdir+../src2/main/soc
++incdir+../src2/uncore
 
-// SystemVerilog Package (Must be parsed before modules using cvw::*)
-../src/cvw.sv
+// 1. Core Components (src2/components/)
+../src2/components/adder.v
+../src2/components/ahbinterface.v
+../src2/components/alu.v
+../src2/components/alu_decoder.v
+../src2/components/branching_unit.v
+../src2/components/controller.v
+../src2/components/csr_file.v
+../src2/components/datapath.v
+../src2/components/ebu.v
+../src2/components/hazard.v
+../src2/components/imm_extend.v
+../src2/components/main_decoder.v
+../src2/components/mux2.v
+../src2/components/mux3.v
+../src2/components/mux4.v
+../src2/components/mux5.v
+../src2/components/pl_reg_de.v
+../src2/components/pl_reg_em.v
+../src2/components/pl_reg_fd.v
+../src2/components/pl_reg_mw.v
+../src2/components/priv_decoder.v
+../src2/components/reg_file.v
+../src2/components/reset_ff.v
+../src2/components/subword_unit.v
+../src2/components/trap_unit.v
 
-// Top-Level SoC Wrapper (instantiates wallypipelinedsoc with cvw_t P parameter)
-../schematics/wallypipelinedsocwrapper.sv
+// 2. CPU Core Top Level (src2/main/)
+../src2/main/riscv_cpu.v
 
-// Accelerator
-../src/accelerator/multiplier_ahb.sv
+// 3. Post-Mortem Hardware Debugger Subsystem (src2/debugger/)
+../src2/debugger/core_debug_ahb.v
+../src2/debugger/core_step_controller.sv
+../src2/debugger/ahb_mux.sv
+../src2/debugger/riscv_debugger_top.sv
+../src2/debugger/socdebug_adp_control.v
+../src2/debugger/socdebug_ahb.v
+../src2/debugger/socdebug_ft1248_control.v
+../src2/debugger/socdebug_uart.v
 
-// Debugger Subsystem
-../src/debugger/ahb_mux.sv
-../src/debugger/core_step_controller.sv
-../src/debugger/riscv_debugger_top.sv
-../src/debugger/socdebug_adp_control.v
-../src/debugger/socdebug_ahb.v
-../src/debugger/socdebug_ft1248_control.v
-../src/debugger/socdebug_uart.v
+// 4. Uncore Subsystem & Peripherals (src2/uncore/)
+../src2/uncore/ahbapbbridge.sv
+../src2/uncore/clint_apb.sv
+../src2/uncore/gpio_apb.sv
+../src2/uncore/plic_apb.sv
+../src2/uncore/ram_ahb.sv
+../src2/uncore/rom_ahb.sv
+../src2/uncore/spi_apb.sv
+../src2/uncore/spi_controller.sv
+../src2/uncore/spi_fifo.sv
+../src2/uncore/uart_apb.sv
+../src2/uncore/uartPC16550D.sv
+../src2/uncore/uncore.sv
 
-// Generic components & memory
-../src/generic/adder.sv
-../src/generic/counter.sv
-../src/generic/decoder.sv
-../src/generic/flop/flopenl.sv
-../src/generic/flop/flopenrc.sv
-../src/generic/flop/flopenr.sv
-../src/generic/flop/flopen.sv
-../src/generic/flop/flopr.sv
-../src/generic/flop/flop.sv
-../src/generic/flop/synchronizer.sv
-../src/generic/mem/ram1p1rwbe_64x128.sv
-../src/generic/mem/ram1p1rwbe_64x22.sv
-../src/generic/mem/ram1p1rwbe_64x44.sv
-../src/generic/mem/ram1p1rwbe.sv
-../src/generic/mem/rom1p1r_128x32.sv
-../src/generic/mem/rom1p1r_128x64.sv
-../src/generic/mem/rom1p1r.sv
-../src/generic/mux.sv
-../src/generic/priorityonehot.sv
-
-// Address Decoders (Used by Uncore)
-../src/mmu/adrdecs.sv
-../src/mmu/adrdec.sv
-
-// Uncore Subsystem & Peripherals
-../src/uncore/ahbapbbridge.sv
-../src/uncore/clint_apb.sv
-../src/uncore/gpio_apb.sv
-../src/uncore/plic_apb.sv
-../src/uncore/ram_ahb.sv
-../src/uncore/rom_ahb.sv
-../src/uncore/spi_apb.sv
-../src/uncore/spi_controller.sv
-../src/uncore/spi_fifo.sv
-../src/uncore/uart_apb.sv
-../src/uncore/uartPC16550D.sv
-../src/uncore/uncore.sv
-
-// Upgraded 5-Stage Pipelined RV32I Processor Core
-../src/core/components/alu_decoder.v
-../src/core/components/alu.v
-../src/core/components/branching_unit.v
-../src/core/components/main_decoder.v
-../src/core/components/priv_decoder.v
-../src/core/components/controller.v
-../src/core/components/csr_file.v
-../src/core/components/hazard.v
-../src/core/components/imm_extend.v
-../src/core/components/pl_reg_de.v
-../src/core/components/pl_reg_em.v
-../src/core/components/pl_reg_fd.v
-../src/core/components/pl_reg_mw.v
-../src/core/components/reg_file.v
-../src/core/components/reset_ff.v
-../src/core/components/subword_unit.v
-../src/core/components/trap_unit.v
-../src/core/components/ahbinterface.v
-../src/core/components/ebu.v
-../src/core/components/datapath.v
-../src/core/riscv_cpu.v
-
-// Wally Core Wrapper & SoC Top Level
-../src/wally/wallypipelinedcore.sv
-../src/wally/wallypipelinedsoc.sv
+// 5. SoC Interconnect, Accelerator & Top-Level (src2/main/soc/)
+../src2/main/soc/ahb_interconnect.v
+../src2/main/soc/multiplier_ahb.v
+../src2/main/soc/riscv_soc_ahb.v

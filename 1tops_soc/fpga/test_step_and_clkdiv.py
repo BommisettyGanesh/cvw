@@ -134,8 +134,29 @@ class MockSoCDebugInterface(BaseProtocolInterface):
         self.step_count = 0
         self.pc = 0x80000000
         self.regs = [0] * 32
+        self.regs[1] = 10
+        self.regs[2] = 20
+        self.regs[3] = 30
         self.memory = {}
+        self.dbg_ctrl = 0x01     # auto_halt_en = 1
+        self.trap_latched = 0
+        self.trap_cause = 0
+        self.trap_val = 0
+        self.trap_pc = 0
+        self.fault_flags = 0
+        self.trace_buf = [0x80000000 + 4 * i for i in range(16)]
+        self.trace_status = 0x00000010
         self.last_resp = "] "
+
+    def inject_mock_trap(self, cause=2, pc=0x80000014, val=0x00200073):
+        """Simulates an unhandled CPU exception triggering Hardware Auto-Halt."""
+        self.trap_latched = 1
+        self.fault_flags = 0x01 # Illegal instruction fault flag
+        self.trap_cause = cause
+        self.trap_pc = pc
+        self.trap_val = val
+        if self.dbg_ctrl & 0x01:
+            self.core_halted = 1
 
     def set_baudrate(self, baud: int):
         self.current_baud = baud
@@ -197,13 +218,59 @@ class MockSoCDebugInterface(BaseProtocolInterface):
                 except ValueError: count = 1
             lines = []
             for _ in range(count):
-                val = self.memory.get(self.addr, 0x00000000)
+                if 0x0B000000 <= self.addr <= 0x0B00007C:
+                    idx = (self.addr - 0x0B000000) >> 2
+                    val = self.regs[idx] if idx < 32 else 0
+                elif self.addr == 0x0B000080: # PCF
+                    val = self.pc + 12
+                elif self.addr == 0x0B000084: # PCD
+                    val = self.pc + 8
+                elif self.addr == 0x0B000088: # PCE
+                    val = self.pc + 4
+                elif self.addr == 0x0B00008C: # PCM
+                    val = self.pc
+                elif self.addr == 0x0B000090: # PCW
+                    val = self.pc
+                elif self.addr == 0x0B000094 or self.addr == 0x0B000098:
+                    val = 0x00200073 if self.trap_latched else 0x00000013
+                elif self.addr == 0x0B00009C:
+                    val = 0x000003E0 if self.core_halted else 0
+                elif self.addr == 0x0B0000A0: # CSR mstatus
+                    val = 0x00001800
+                elif self.addr == 0x0B0000A4: # CSR mcause
+                    val = self.trap_cause
+                elif self.addr == 0x0B0000A8: # CSR mtval
+                    val = self.trap_val
+                elif self.addr == 0x0B0000D0: # DBG_CTRL
+                    val = self.dbg_ctrl
+                elif self.addr == 0x0B0000D4: # TRAP_CAUSE
+                    val = self.trap_cause
+                elif self.addr == 0x0B0000D8: # TRAP_VAL
+                    val = self.trap_val
+                elif self.addr == 0x0B0000DC: # TRAP_PC
+                    val = self.trap_pc
+                elif 0x0B000100 <= self.addr <= 0x0B00013C: # TRACE_BUF
+                    trace_idx = (self.addr - 0x0B000100) >> 2
+                    val = self.trace_buf[trace_idx] if trace_idx < len(self.trace_buf) else 0
+                elif self.addr == 0x0B000140: # TRACE_STATUS
+                    val = self.trace_status
+                else:
+                    val = self.memory.get(self.addr, 0x00000000)
                 lines.append(f"R 0x{val:08x}")
                 self.addr += 4
             self.last_resp = "\n".join(lines) + "\n]\n"
         elif op == 'W' and len(parts) > 1:
             val = int(parts[1], 16)
-            self.memory[self.addr] = val
+            if self.addr == 0x0B0000D0: # DBG_CTRL
+                self.dbg_ctrl = val & 0x1
+                if val & 0x2: # trap_clr
+                    self.trap_latched = 0
+                    self.trap_cause = 0
+                    self.trap_val = 0
+                    self.trap_pc = 0
+                    self.fault_flags = 0
+            else:
+                self.memory[self.addr] = val
             self.last_resp = f"W 0x{val:08x}\n]\n"
             self.addr += 4
         elif op == 'V' and len(parts) > 1:
@@ -239,7 +306,7 @@ class MockSoCDebugInterface(BaseProtocolInterface):
                 else:
                     self.step_done = 0
 
-            gpi = (self.core_halted & 1) | ((self.step_busy & 1) << 1) | ((self.step_done & 1) << 2)
+            gpi = (self.core_halted & 1) | ((self.step_busy & 1) << 1) | ((self.step_done & 1) << 2) | ((self.trap_latched & 1) << 3) | ((self.fault_flags & 0xF) << 4)
             self.last_resp = f"C 0x{gpi:02x}{self.gpo:02x}0000\n]\n"
         elif op == 'B':
             if len(parts) > 1:
@@ -517,6 +584,71 @@ class SoCDebugTester:
         val_restored = int([t for t in d_restored.replace("]", "").strip().split() if t.startswith("0x")][0], 16) & 0xFF
         self.record_result("FT1248 Divider Restored", val_restored == orig_ft_div, f"Got {val_restored}")
 
+    # -------------------------------------------------------------------------
+    # Test 4: Post-Mortem Crash Debugging & Core Inspection (0x0B00_0000)
+    # -------------------------------------------------------------------------
+    def test_post_mortem_debug(self):
+        print("\n==============================================================================")
+        print(" TEST SUITE 4: POST-MORTEM DEBUGGING & CORE INSPECTION (0x0B00_0000)")
+        print("==============================================================================")
+
+        # 4.1 Halt Core for non-intrusive inspection
+        print("[*] 4.1 Halting Core via 'C 0202'...")
+        self.send_cmd("C 0202")
+        status_resp = self.send_cmd("C")
+        self.record_result("Core Halted for Debug Readout", "C 0x01" in status_resp, f"Status={status_resp}")
+
+        # 4.2 Read General Purpose Registers (x0 - x3) at 0x0B00_0000
+        print("[*] 4.2 Reading General-Purpose Registers (x0 - x3) from 0x0B00_0000...")
+        self.send_cmd("A 0B000000")
+        r_resp = self.send_cmd("R 00000004")
+        lines = [l.strip() for l in r_resp.replace("]", "").strip().split("\n") if l.startswith("R 0x")]
+        print(f"    GPRs read: {lines}")
+        self.record_result("Read x0 = 0", len(lines) >= 1 and lines[0] == "R 0x00000000", f"x0={lines[0] if lines else 'None'}")
+        self.record_result("Read x1 = 10 (0x0a)", len(lines) >= 2 and lines[1] == "R 0x0000000a", f"x1={lines[1] if len(lines) > 1 else 'None'}")
+        self.record_result("Read x2 = 20 (0x14)", len(lines) >= 3 and lines[2] == "R 0x00000014", f"x2={lines[2] if len(lines) > 2 else 'None'}")
+        self.record_result("Read x3 = 30 (0x1e)", len(lines) >= 4 and lines[3] == "R 0x0000001e", f"x3={lines[3] if len(lines) > 3 else 'None'}")
+
+        # 4.3 Inspect Pipeline Stage Program Counters at 0x0B00_0080
+        print("[*] 4.3 Inspecting Stage PCs (PCF, PCD, PCE, PCM, PCW) at 0x0B00_0080...")
+        self.send_cmd("A 0B000080")
+        pc_resp = self.send_cmd("R 00000005")
+        pc_lines = [l.strip() for l in pc_resp.replace("]", "").strip().split("\n") if l.startswith("R 0x")]
+        self.record_result("Inspect Stage PCs Readout", len(pc_lines) == 5, f"Stage PCs={pc_lines}")
+
+        # 4.4 Inspect Micro-Trace Buffer & Status at 0x0B00_0100
+        print("[*] 4.4 Inspecting Micro-Trace Buffer at 0x0B00_0100 & Status at 0x0B00_0140...")
+        self.send_cmd("A 0B000140")
+        stat_resp = self.send_cmd("R")
+        self.record_result("Micro-Trace Status Readout", "R 0x" in stat_resp, f"TraceStatus={stat_resp}")
+
+        # 4.5 Test Hardware Auto-Halt on Trap & Crash Latching
+        print("[*] 4.5 Testing Hardware Auto-Halt on Trap & Crash Diagnosis...")
+        if hasattr(self.iface, "inject_mock_trap"):
+            self.iface.inject_mock_trap(cause=2, pc=0x80000014, val=0x00200073)
+
+        trap_status = self.send_cmd("C")
+        self.record_result("Hardware Auto-Halt & Trap Latch in GPI8", "0x19" in trap_status or "0x1" in trap_status, f"Status={trap_status}")
+
+        # 4.6 Inspect Sticky Crash Registers (TRAP_CAUSE, TRAP_PC, TRAP_VAL)
+        print("[*] 4.6 Reading Sticky Latched Crash State (TRAP_CAUSE, TRAP_PC, TRAP_VAL)...")
+        self.send_cmd("A 0B0000D4")
+        cause_resp = self.send_cmd("R")
+        self.send_cmd("A 0B0000D8")
+        val_resp = self.send_cmd("R")
+        self.send_cmd("A 0B0000DC")
+        pc_resp2 = self.send_cmd("R")
+        self.record_result("Latched TRAP_CAUSE = 2 (Illegal Instr)", "0x00000002" in cause_resp, f"Cause={cause_resp}")
+        self.record_result("Latched TRAP_PC = 0x80000014", "0x80000014" in pc_resp2, f"PC={pc_resp2}")
+        self.record_result("Latched TRAP_VAL = 0x00200073", "0x00200073" in val_resp, f"Val={val_resp}")
+
+        # 4.7 Clear Sticky Crash Trap via DBG_CTRL (W 00000003)
+        print("[*] 4.7 Clearing Trap Latches via DBG_CTRL at 0x0B00_00D0...")
+        self.send_cmd("A 0B0000D0")
+        self.send_cmd("W 00000003")
+        clear_status = self.send_cmd("C")
+        self.record_result("Trap Latch Cleared", "0x19" not in clear_status, f"Status after clear={clear_status}")
+
     def run_all(self, test_filter="all", bin_path="step_test.bin"):
         t0 = time.time()
         if test_filter in ("all", "step"):
@@ -525,6 +657,8 @@ class SoCDebugTester:
             self.test_uart_clock_division()
         if test_filter in ("all", "clkdiv", "ft1248"):
             self.test_ft_clock_division()
+        if test_filter in ("all", "debug", "postmortem"):
+            self.test_post_mortem_debug()
 
         elapsed = time.time() - t0
         print("\n==============================================================================")
@@ -554,7 +688,7 @@ def main():
                         help="FTDI device URL for FT1248")
     parser.add_argument("--mock", action="store_true",
                         help="Run using full in-memory simulator without hardware")
-    parser.add_argument("--test", choices=["all", "step", "clkdiv", "uart", "ft1248"], default="all",
+    parser.add_argument("--test", choices=["all", "step", "clkdiv", "uart", "ft1248", "debug", "postmortem"], default="all",
                         help="Subset of tests to run (default: all)")
     parser.add_argument("--clk-freq", type=int, default=50_000_000,
                         help="SoC Core clock frequency in Hz (default: 50 MHz for FPGA)")

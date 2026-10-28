@@ -5,15 +5,13 @@
 // Dual-Protocol Hardware Debugger on Digilent Basys 3 (Artix-7 xc7a35tcpg236-1)
 ////////////////////////////////////////////////////////////////////////////////
 
-`include "config.vh"
-import cvw::*;
-`include "parameter-defs.vh"
+// Top-level FPGA wrapper for 1TOPS SoC (sourced from 1tops_soc/src2/)
 
 module wally_soc_fpga_top #(
   parameter CLK_FREQ    = 50_000_000, // 50 MHz SoC clock from on-chip MMCM
   parameter BAUD_RATE   = 115200,     // Debugger UART baud rate
   parameter PROMPT_CHAR = "]",        // ADP CLI prompt
-  // NOTE: To auto-prompt ']' on boot without needing 0x1B (ESC), uncomment lines 137 & 737 in src/debugger/socdebug_adp_control.v
+  // NOTE: Sourced strictly from src2/debugger/socdebug_adp_control.v
   parameter FT_WIDTH    = 1,          // FT1248 bus width (1-bit on Basys 3 PMOD JB)
   parameter FT_CLKDIV   = 8'd1        // SCLK = 50 MHz / (2 * (1 + 1)) = 12.5 MHz FT1248 clock
 ) (
@@ -230,33 +228,17 @@ module wally_soc_fpga_top #(
   // Drive LED: Solid ON if ']' detected; Blinks ~200ms on any UART activity
   assign led_rx_detect = sticky_match | (pulse_timer != '0);
 
-  // Unused peripheral ties
-  wire        ExternalStall = 1'b0;
-  wire        TIMECLK       = 1'b0;
-  wire [31:0] GPIOIN        = 32'b0;
+  // Peripheral ties and status signals
+  wire [31:0] GPIOIN = 32'b0;
   wire [31:0] GPIOOUT;
   wire [31:0] GPIOEN;
-  wire        SPIIn         = 1'b0;
+  wire        SPIIn  = 1'b0;
   wire        SPIOut;
   wire [3:0]  SPICS;
   wire        SPICLK;
-  wire        SDCIn         = 1'b0;
-  wire        SDCCmd;
-  wire [3:0]  SDCCS;
-  wire        SDCCLK;
-  wire        HCLK, HRESETn;
-  wire [P.PA_BITS-1:0] HADDR;
-  wire [P.AHBW-1:0]    HWDATA;
-  wire [P.XLEN/8-1:0]  HWSTRB;
-  wire                 HWRITE;
-  wire [2:0]           HSIZE, HBURST;
-  wire [3:0]           HPROT;
-  wire [1:0]           HTRANS;
-  wire                 HMASTLOCK, HREADY, reset;
 
-  // Instantiate complete SoC with integrated Dual-Protocol Debugger & BRAM memories
-  wallypipelinedsoc #(
-    .P           (P),
+  // Instantiate complete SoC from 1tops_soc/src2/main/soc/riscv_soc_ahb.v
+  riscv_soc_ahb #(
     .CLK_FREQ    (CLK_FREQ),
     .BAUD_RATE   (BAUD_RATE),
     .PROMPT_CHAR (PROMPT_CHAR),
@@ -264,22 +246,12 @@ module wally_soc_fpga_top #(
     .FT_CLKDIV   (FT_CLKDIV)
   ) soc (
     .clk              (clk_soc),
-    .reset_ext        (reset_ext),
-    .reset            (reset),
-    .ExternalStall    (ExternalStall),
-    .HCLK             (HCLK),
-    .HRESETn          (HRESETn),
-    .HADDR            (HADDR),
-    .HWDATA           (HWDATA),
-    .HWSTRB           (HWSTRB),
-    .HWRITE           (HWRITE),
-    .HSIZE            (HSIZE),
-    .HBURST           (HBURST),
-    .HPROT            (HPROT),
-    .HTRANS           (HTRANS),
-    .HMASTLOCK        (HMASTLOCK),
-    .HREADY           (HREADY),
-    .TIMECLK          (TIMECLK),
+    .reset            (reset_ext),
+    .MExtInt          (1'b0),
+    .TrapM            (),
+    .mretM            (),
+    .PCW              (),
+    .ResultW          (),
     .GPIOIN           (GPIOIN),
     .GPIOOUT          (GPIOOUT),
     .GPIOEN           (GPIOEN),
@@ -289,10 +261,6 @@ module wally_soc_fpga_top #(
     .SPIOut           (SPIOut),
     .SPICS            (SPICS),
     .SPICLK           (SPICLK),
-    .SDCIn            (SDCIn),
-    .SDCCmd           (SDCCmd),
-    .SDCCS            (SDCCS),
-    .SDCCLK           (SDCCLK),
 
     // Debugger Subsystem Pins
     .dbg_sel          (dbg_sel),

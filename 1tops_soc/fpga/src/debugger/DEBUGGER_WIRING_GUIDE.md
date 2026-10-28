@@ -11,6 +11,7 @@ The subsystem features **Dual-Protocol Hardware Interface Integration**:
 6. **RISC-V CPU Pipeline Hazard Unit & Stall Hooks** (`hazard.sv` / `wallypipelinedcore.sv`).
 7. **2-Master AHB-Lite Bus Arbiter & Multiplexer** (`ahb_mux.sv`).
 8. **Downstream Slaves & Memories**: 1TOPS Accelerator Multiplier, IRAM, DRAM, Boot ROM, APB Bridge.
+9. **Core Debug & Post-Mortem AHB Slave** (`core_debug_ahb.v` at Base `0x0B00_0000`): Non-intrusive direct readout of GPRs `x0`–`x31`, privileged CSRs, pipeline PCs, 16-entry micro-trace buffer, and hardware auto-halt trap freeze.
 
 ---
 
@@ -52,6 +53,7 @@ graph TD
         U_FT["Dedicated FT1248 Controller - socdebug_ft1248_control.v"]:::dbgft
         SMUX["2-to-1 Stream Mux - Controlled by dbg_sel pad"]:::mux
         ADP["SoCDebug ADP Controller and AHB Master"]:::adp
+        STEP["Core Step Controller - core_step_controller.sv"]:::adp
     end
 
     subgraph UncoreSub ["Uncore Subsystem - uncore.sv"]
@@ -60,21 +62,24 @@ graph TD
         RMUX["HRDATA and HREADY Read Multiplexer"]:::slave
     end
 
-    subgraph CPUSub ["RISC-V CPU Core - wallypipelinedcore.sv"]
-        HAZ["Hazard Unit - hazard.sv"]:::hazard
+    subgraph CPUSub ["RISC-V CPU Core - riscv_cpu.v"]
+        HAZ["Hazard Unit - hazard.v"]:::hazard
         PIPE["5-Stage Pipeline - IF ID EX MEM WB"]:::core
+        REGFILE["Regfile Aux Read Port - x0-x31"]:::core
+        CSRFILE["Privileged CSRs - mcause, mtval, mepc"]:::core
     end
 
     subgraph BusArbiter ["AHB-Lite Bus Arbiter - ahb_mux.sv"]
         AMUX["2-to-1 AHB Master Arbiter - Priority to Debugger"]:::mux
     end
 
-    subgraph Slaves ["Downstream Memories and Accelerators"]
+    subgraph Slaves ["Downstream Memories, Accelerators and Core Debug"]
         ACC["1TOPS Accelerator Multiplier - 0x3000_0000"]:::slave
         IRAM["Instruction SRAM - ram_i 0x8000_0000"]:::slave
         DRAM["Data SRAM - ram_d 0x8000_2000"]:::slave
         ROM["Boot ROM - bootrom 0x0001_0000"]:::slave
         APB["APB Peripherals - CLINT PLIC GPIO"]:::slave
+        CDBG["Core Debug & Post-Mortem AHB Slave - 0x0B00_0000"]:::slave
     end
 
     %% Host Connections
@@ -110,11 +115,19 @@ graph TD
     ADP -->|Selected TX Stream| SMUX
 
     %% Core Control Interface
-    ADP -->|core_halt_o| HAZ
+    ADP -->|core_halt_o| STEP
+    STEP -->|ExternalStall| HAZ
     ADP -->|core_halt_o - Priority Select| AMUX
     ADP -->|core_reset_o| CPUSub
     HAZ -->|core_halted_i| ADP
     HAZ -->|Stall Pipeline Stages| PIPE
+    CDBG -->|auto_halt_trap| STEP
+
+    %% Core Debug Signals into AHB Slave
+    REGFILE -->|dbg_rf_rdata| CDBG
+    CSRFILE -->|Privileged CSR Vectors| CDBG
+    PIPE -->|PCF, PCD, PCE, PCM, PCW, Instr| CDBG
+    HAZ -->|Stall & Flush Flags| CDBG
 
     %% AHB Masters
     PIPE -->|Master 0 - CPU core_h bus| AMUX
@@ -127,6 +140,7 @@ graph TD
     DEC -->|HSELDRAM| DRAM
     DEC -->|HSELBootRom| ROM
     DEC -->|HSELBRIDGE| APB
+    DEC -->|HSELCOREDBG| CDBG
 
     %% Slave Readback
     ACC --> RMUX
@@ -134,6 +148,7 @@ graph TD
     DRAM --> RMUX
     ROM --> RMUX
     APB --> RMUX
+    CDBG --> RMUX
     RMUX -->|AHB Read Data and Ready| AMUX
     AMUX -->|M0 Readback| PIPE
     AMUX -->|M1 Readback| ADP
@@ -211,6 +226,35 @@ The `core_step_controller` supports two hardware-controlled single-stepping mode
 - **Safety Watchdog**: An internal counter prevents debugger hang if an instruction is blocked indefinitely (default 65,536 cycles).
 - **Core Resume (`C 0102\n`)**: Releases `ExternalStall` so the CPU continues running freely from where it was halted.
 
+### 4.2 Glitch/Hazard-Free Scan-Chain Friendly Post-Mortem Debugging Architecture
+
+The post-mortem crash analysis unit (`core_debug_ahb.v`) is designed specifically to comply with deep submicron ASIC timing, physical testability (DFT), and hazard-free asynchronous/synchronous boundaries:
+
+1. **Scan-Chain Friendly (DFT Compliant)**:
+   - **Single Clock Domain**: Operates strictly on `HCLK` synchronously with the CPU core and uncore bus fabric. No internal clock divider gates or derived clocks.
+   - **Standard Resets**: Driven by active-low asynchronous system reset `HRESETn`. No internal set/reset loops.
+   - **Pure Synchronous Registers**: 100% standard D flip-flops with synchronous multiplexed enables. **Zero latches, zero delay elements, zero gated clock cells.**
+   - All flip-flops have controllable scan paths and predictable clock tree distribution.
+
+2. **Glitch-Free & Hazard-Free Non-Intrusive Register Access**:
+   - The CPU register file (`reg_file.v`) incorporates an auxiliary, non-intrusive 32-bit combinational read port (`dbg_rd_addr` -> `dbg_rd_data`).
+   - During the AHB address phase ($N$), the AHB address bits `HADDR[6:2]` directly index `dbg_rd_addr`.
+   - The register file array reads out combinationally, stabilizing before the AHB data phase ($N+1$).
+   - Returns data in a single cycle (`HREADYOUT = 1`, zero wait states) without stealing pipeline read cycles, without injecting hazard stalls into the CPU, and without bus contention.
+
+3. **Hardware Auto-Halt on Trap**:
+   - When an unhandled trap or CPU exception occurs (`TrapM = 1` or `IllegalInstrD = 1`), `core_debug_ahb` asserts `auto_halt_trap = 1`.
+   - This signal feeds directly into `core_step_controller.sv`, which instantaneously shifts the FSM into `STATE_HALTED` and forces `ExternalStall = 1`.
+   - **Why This Matters**: Standard processors continue executing past an unhandled exception into a trap handler or infinite loop, rapidly clobbering registers and pipeline state. Hardware Auto-Halt freezes the pipeline **within the same cycle**, preserving the exact faulting PC, memory addresses, opcode, and registers at the moment of failure.
+
+4. **Sticky Crash Capture & Circular Micro-Trace Buffer**:
+   - **Sticky Latches**: `TRAP_CAUSE` (`mcause`), `TRAP_VAL` (`mtval`), and `TRAP_PC` (`PCM`) latch synchronously on the first clock edge of the trap, remaining frozen until explicitly cleared by software (`DBG_CTRL[1] = 1`).
+   - **Circular Micro-Trace Buffer**: A 16-entry synchronous FIFO continuously captures the Writeback stage Program Counter (`PCW`) on every valid instruction retirement (`InstrRetired = 1`). Upon crash, it provides a 16-step historical trace of the execution path leading up to the fault.
+
+5. **Enhanced Status Visibility (`GPI8`)**:
+   - `GPI8[3]` flags `dbg_trap_latched`, allowing immediate status queries via `C` over UART or FT1248 to detect core crashes.
+   - `GPI8[7:4]` reflect live hardware fault flags (`IllegalInstrD`, `MisalignD`, `MemFaultM`, `TrapM`).
+
 ---
 
 ## 5. Bus Arbiter Specification: `ahb_mux.sv`
@@ -257,7 +301,7 @@ vlog -sv socdebug_adp_control.v socdebug_ahb.v socdebug_uart.v socdebug_ft1248_c
 vsim -c -do "run -all; quit" tb_debugger
 ```
 
-### Verification Results Summary (18 / 18 Passed, 0 Errors):
+### Verification Results Summary (20 / 20 Passed, 0 Errors):
 
 | Test # | Protocol / Mode | Description | Verification Method | Status |
 | :---: | :---: | :--- | :--- | :---: |
@@ -279,6 +323,8 @@ vsim -c -do "run -all; quit" tb_debugger
 | **4.2** | Step Controller | Single Instruction Stepping | `C 0204` triggers step, stalls released, retires 1 instr, auto-freezes | **PASS** |
 | **4.3** | Step Controller | 1 Clock-Cycle Stepping | `C 020c` triggers 1-cycle step, executes 1 clock tick, auto-freezes | **PASS** |
 | **4.4** | Step Controller | Core Resume from Step FSM | `C 0102` returns FSM to `STATE_RUN`, `core_stall_effective = 0` | **PASS** |
+| **5.1** | Post-Mortem Debug | Core AHB Inspection | Read `x1=10`, `x2=20`, `x3=30` via `0x0B00_0004..C`, PCW & micro-trace | **PASS** |
+| **5.2** | Post-Mortem Debug | Auto-Halt on Trap & Latch | Injected trap `0x0020_0073`, verified auto-freeze, `mcause=2`, PC=`0x8000_0014` | **PASS** |
 
 ---
 

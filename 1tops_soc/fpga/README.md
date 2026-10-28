@@ -8,28 +8,21 @@ This directory contains the standalone, FPGA-tuned implementation of the **CORE-
 
 ```
 1tops_soc/fpga/
-├── config/              # Wally SoC configuration (config.vh, parameter-defs.vh)
 ├── constrs/
 │   └── basys3.xdc       # Complete physical pin constraints for Basys 3
-├── src/                 # Full synthesizable SoC RTL tree
-│   ├── accelerator/     # 1TOPS neural net accelerator / multiplier (0x3000_0000)
-│   ├── debugger/        # riscv_debugger_top, socdebug_uart, socdebug_ft1248, core_step_controller, ahb_mux
-│   │   ├── sw/          # Host software: dbg_cli.py
-│   │   └── tb/          # Complete dual-protocol testbench (tb_debugger.sv)
-│   ├── generic/mem/     # FPGA-tuned ram1p1rwbe.sv (Block RAM inferred)
-│   ├── uncore/          # APB bridge, GPIO, CLINT, PLIC, 16550 Uncore UART
-│   └── wally/           # wallypipelinedcore, wallypipelinedsoc (with integrated debugger)
 ├── top/
-│   └── wally_soc_fpga_top.sv # Top-level FPGA wrapper wiring clocks, resets, pads
-├── build_fpga.tcl       # Automated Vivado project creation and build script
-├── test_step_and_clkdiv.py   # Automated Python test runner for step execution & clock dividers
-├── sim_step_and_clkdiv.sh    # Automated Vivado XSIM simulation script
+│   └── wally_soc_fpga_top.sv # Top-level FPGA wrapper wiring clocks, resets, pads to riscv_soc_ahb
+├── build_fpga.tcl       # Automated Vivado project creation and build script (sources from ../src2)
+├── test_step_and_clkdiv.py   # Automated Python test runner for step execution, clock dividers & post-mortem debug
+├── sim_step_and_clkdiv.sh    # Automated Vivado XSIM simulation script (sources from ../src2)
 ├── STEP_AND_CLOCK_DIV_VERIFICATION_GUIDE.md # In-depth architectural & verification manual
 ├── PERIPHERAL_VERIFICATION_GUIDE.md         # MMIO peripheral probing guide
 ├── step_test.bin        # 64-byte deterministic assembly test program for step verification
 ├── factorial.bin        # 76-byte factorial test program
 └── README.md            # This documentation
 ```
+
+> **Note on RTL Sourcing**: All synthesizable circuitry, CPU core logic, uncore peripherals, and debugger infrastructure are sourced **strictly from `1tops_soc/src2/`** (`../src2/components/`, `../src2/debugger/`, `../src2/main/`, `../src2/uncore/`).
 
 ---
 
@@ -54,11 +47,22 @@ This directory contains the standalone, FPGA-tuned implementation of the **CORE-
 ### D. Direct Auto-Prompt on Boot
 - On power-on or board reset (`btnC`), the controller sends ` 0x50c1ab04\r\n` and **directly auto-enters ADP command mode with prompt `]`**. No escape character (`0x1B`) is required.
 
-### E. Subword-Accurate HWSTRB Byte Decoding (`src/wally/wallypipelinedsoc.sv`)
+### E. Subword-Accurate HWSTRB Byte Decoding (`src2/main/soc/riscv_soc_ahb.v`)
 - Dynamic decoding of `dbg_HWSTRB` prevents subword binary upload (`U`) corruption:
   - Word (`HSIZE = 2'b10`): `4'b1111`
   - Halfword (`HSIZE = 2'b01`): `HADDR[1] ? 4'b1100 : 4'b0011`
   - Byte (`HSIZE = 2'b00`): Decoded from `HADDR[1:0]` (`4'b0001`, `4'b0010`, `4'b0100`, or `4'b1000`)
+
+### F. Hardware Auto-Halt on Trap & Post-Mortem Crash Analysis (`src2/debugger/core_debug_ahb.v`)
+- **Dedicated AHB Slave Aperture (`0x0B00_0000` – `0x0B00_0FFF`)**:
+  - Exposes General Purpose Registers (`x0`–`x31`) via a non-intrusive auxiliary combinational read port on `reg_file.v`.
+  - Exposes all 5 pipeline stage Program Counters (`PCF`, `PCD`, `PCE`, `PCM`, `PCW`), instruction opcodes, and hazard flags.
+  - Exposes privileged CSRs (`mstatus`, `mcause`, `mtval`, `mepc`, `mtvec`, `mie`, `mip`, `mscratch`, cycle and instret counters).
+- **Instantaneous Hardware Auto-Halt**:
+  - Unhandled exceptions (`TrapM = 1` or `IllegalInstrD = 1`) immediately assert `auto_halt_trap`, switching the step controller into `STATE_HALTED` within the same clock cycle to prevent the CPU from entering infinite crash loops or overwriting register state.
+- **Sticky Crash Registers**: Synchronously latches `TRAP_CAUSE` (`mcause`), `TRAP_VAL` (`mtval`), and `TRAP_PC` (`PCM`) at the moment of failure.
+- **16-Entry Circular Micro-Trace Buffer**: Records the last 16 committed instruction PCs leading up to the crash.
+- **Scan-Chain Friendly**: Single clock domain (`HCLK`), standard active-low reset (`HRESETn`), pure synchronous D-FFs with zero latches and zero gated clocks.
 
 ---
 
@@ -108,9 +112,13 @@ Runs the self-checking SystemVerilog testbench (`tb/tb_debugger.sv`), executing 
 ```
 
 ### B. Automated Python Test Suite (`test_step_and_clkdiv.py`)
-Run without hardware using the built-in simulator:
+Run all tests without hardware using the built-in simulator:
 ```bash
 python3 test_step_and_clkdiv.py --mock
+```
+Run dedicated Post-Mortem Crash Debugging test:
+```bash
+python3 test_step_and_clkdiv.py --mock --test postmortem
 ```
 Run against physical hardware on Basys 3:
 ```bash
@@ -119,46 +127,46 @@ python3 test_step_and_clkdiv.py --protocol uart --device /dev/ttyUSB0 --baud 115
 
 ---
 
-## 6. Testing via Python CLI (`src/debugger/sw/dbg_cli.py`)
+## 6. Testing via Python CLI (`../src2/debugger/sw/dbg_cli.py`)
 
 ### A. Core Control & Stepping:
 ```bash
 # Query status (halt, busy, done flags)
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 status
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 status
 
 # Halt CPU pipeline
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 halt
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 halt
 
 # Single-step exactly 1 retired instruction
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 step
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 step
 
 # Single-step exactly 1 clock cycle
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 step_cycle
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 step_cycle
 
 # Resume free-running execution
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 resume
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 resume
 ```
 
 ### B. Memory & Peripheral Access:
 ```bash
 # Read/Write 32-bit memory
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 read 0x80000000
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 write 0x80002000 0xdeadbeef
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 read 0x80000000
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 write 0x80002000 0xdeadbeef
 
 # Compute with Accelerator Multiplier
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 read_accel
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 read_accel
 ```
 
 ### C. Clock Divider Configuration:
 ```bash
 # Read current UART and FT1248 clock dividers
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 get_dividers
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 get_dividers
 
 # Set UART divider (e.g. 217 for 230,400 baud at 50 MHz)
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 set_uart_div 217
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 set_uart_div 217
 
 # Set FT1248 divider (e.g. 8)
-python3 src/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 set_ft_div 8
+python3 ../src2/debugger/sw/dbg_cli.py --protocol uart --device /dev/ttyUSB0 set_ft_div 8
 ```
 
 ---

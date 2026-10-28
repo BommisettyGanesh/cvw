@@ -13,7 +13,12 @@ module riscv_soc_ahb #(
     parameter IRAM_BASE        = 32'h8000_0000,
     parameter IRAM_SIZE_BYTES  = MEM_SIZE_BYTES / 2,
     parameter DRAM_BASE        = IRAM_BASE + (MEM_SIZE_BYTES / 2),
-    parameter DRAM_SIZE_BYTES  = MEM_SIZE_BYTES / 2
+    parameter DRAM_SIZE_BYTES  = MEM_SIZE_BYTES / 2,
+    parameter CLK_FREQ         = 100_000_000,
+    parameter BAUD_RATE        = 115200,
+    parameter PROMPT_CHAR      = "]",
+    parameter FT_WIDTH         = 1,
+    parameter FT_CLKDIV        = 8'd4
 )(
     input             clk,
     input             reset,
@@ -168,11 +173,11 @@ module riscv_soc_ahb #(
 
     // 1. Dual-Protocol Hardware Debugger Subsystem (UART + FT1248)
     riscv_debugger_top #(
-        .CLK_FREQ(100_000_000),
-        .BAUD_RATE(115200),
-        .PROMPT_CHAR("]"),
-        .FT_WIDTH(1),
-        .FT_CLKDIV(8'd4)
+        .CLK_FREQ(CLK_FREQ),
+        .BAUD_RATE(BAUD_RATE),
+        .PROMPT_CHAR(PROMPT_CHAR),
+        .FT_WIDTH(FT_WIDTH),
+        .FT_CLKDIV(FT_CLKDIV)
     ) u_debugger (
         .clk(clk),
         .rst_n(HRESETn),

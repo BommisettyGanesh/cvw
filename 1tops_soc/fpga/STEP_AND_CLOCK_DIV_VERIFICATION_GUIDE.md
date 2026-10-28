@@ -96,6 +96,11 @@ All commands are terminated with `<ENTER>` (`\r` or `\n`).
   - `Bit 0` (`0x01`): **Core Halted** (1 = CPU halted by debugger).
   - `Bit 1` (`0x02`): **Step Busy** (1 = Step in flight).
   - `Bit 2` (`0x04`): **Step Done** (1-cycle pulse upon completion).
+  - `Bit 3` (`0x08`): **`dbg_trap_latched`** (1 = Unhandled exception / crash latched by hardware).
+  - `Bit 4` (`0x10`): **`IllegalInstrD`** (Illegal opcode fault flag).
+  - `Bit 5` (`0x20`): **`MisalignD`** (Misaligned branch/jump fault flag).
+  - `Bit 6` (`0x40`): **`MemFaultM`** (Memory/bus fault flag).
+  - `Bit 7` (`0x80`): **`TrapM`** (Dynamic active trap pulse).
 - **`GPO8` Control Register (Read/Write)**:
   - `Bit 0` (`0x01`): Core Reset Request.
   - `Bit 1` (`0x02`): Core Halt Request (`ExternalStall`).
@@ -347,17 +352,77 @@ C 0102
 
 ---
 
-## 8. Summary of Files & Tools
+## 8. Verification Method 5: Post-Mortem Crash Debugging & Core Inspection (`0x0B00_0000`)
+
+The **Core Debug AHB Slave** (`core_debug_ahb.v`) exposes internal processor pipeline registers, register file, privileged CSRs, and execution history directly onto the AHB bus at base address `0x0B00_0000`.
+
+### 8.1 Register Map (`Base: 0x0B00_0000`)
+- `0x000` – `0x07C`: General-Purpose Registers `x0` – `x31` (readout via non-intrusive auxiliary port).
+- `0x080` – `0x090`: Stage Program Counters (`PCF`, `PCD`, `PCE`, `PCM`, `PCW`).
+- `0x094` – `0x098`: Active instruction words in Decode and Memory stages (`InstrD`, `InstrM`).
+- `0x09C`: Pipeline Status (`{StallFlags[4:0], FlushFlags[4:0]}`).
+- `0x0A0` – `0x0CC`: Privileged CSRs (`mstatus`, `mcause`, `mtval`, `mepc`, `mtvec`, `mie`, `mip`, `mscratch`, cycle and instret counters).
+- `0x0D0`: `DBG_CTRL` (Bit 0 = auto-halt enable, Bit 1 = clear sticky crash trap).
+- `0x0D4`: `TRAP_CAUSE` (Sticky latched exception cause at crash).
+- `0x0D8`: `TRAP_VAL` (Sticky latched trap value / faulting address / opcode).
+- `0x0DC`: `TRAP_PC` (Sticky latched Program Counter of faulting instruction).
+- `0x100` – `0x13C`: 16-entry Circular Micro-Trace Buffer (last 16 retired instruction PCs).
+- `0x140`: Micro-Trace Status (`{wrap_flag, write_ptr[3:0]}`).
+
+### 8.2 Testing via Python Automated Test Suite
+Run the dedicated post-mortem verification suite in mock mode:
+```bash
+python3 test_step_and_clkdiv.py --mock --test postmortem
+```
+Or run all tests:
+```bash
+python3 test_step_and_clkdiv.py --mock --test all
+```
+
+### 8.3 Post-Mortem Analysis in Serial Terminal (ADP Commands)
+1. **Detect Crash via Status Query (`C`)**:
+   ```text
+   C
+   ```
+   If a crash occurred, `GPI8` returns `0x19` (`Bit 0` = Halted, `Bit 3` = Trap Latched, `Bit 4` = Illegal Instruction).
+2. **Inspect Faulting Instruction & PC**:
+   ```text
+   A 0B0000D4
+   R
+   A 0B0000DC
+   R
+   ```
+   Returns latched `mcause` (e.g. `0x00000002` for illegal instruction) and exact faulting `PC` (e.g. `0x80000014`).
+3. **Dump Register File (`x0` – `x31`) in one burst**:
+   ```text
+   A 0B000000
+   R 00000020
+   ```
+4. **Inspect Last 16 Committed Program Counters**:
+   ```text
+   A 0B000100
+   R 00000010
+   ```
+5. **Clear Crash Latch**:
+   ```text
+   A 0B0000D0
+   W 00000003
+   ```
+
+---
+
+## 9. Summary of Files & Tools
 
 | File Path | Description |
 | :--- | :--- |
-| [`src/debugger/core_step_controller.sv`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/src/debugger/core_step_controller.sv) | Hardware Step FSM controller arbitrating `ExternalStall` |
-| [`src/debugger/socdebug_adp_control.v`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/src/debugger/socdebug_adp_control.v) | ADP controller with `B`, `D`, and step GPO/GPI extensions |
-| [`src/debugger/socdebug_uart.v`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/src/debugger/socdebug_uart.v) | Glitch-free reconfigurable UART baud divider engine |
-| [`src/debugger/socdebug_ft1248_control.v`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/src/debugger/socdebug_ft1248_control.v) | Reconfigurable FT1248 clock divider |
-| [`src/debugger/tb/tb_debugger.sv`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/src/debugger/tb/tb_debugger.sv) | Self-checking simulation testbench (Parts 4 & 5) |
-| [`src/debugger/sw/dbg_cli.py`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/src/debugger/sw/dbg_cli.py) | Python CLI supporting `step`, `step_cycle`, `get_dividers`, etc. |
-| [`test_step_and_clkdiv.py`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/test_step_and_clkdiv.py) | Automated Python test runner (`--mock` & live hardware) |
-| [`sim_step_and_clkdiv.sh`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/sim_step_and_clkdiv.sh) | Automated Vivado XSIM simulation script |
-| [`../software/step_test.S`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/software/step_test.S) | Dedicated RV32I assembly stepping verification program |
-| [`step_test.bin`](file:///home/ganesh/Desktop/shri/cvw/1tops_soc/fpga/step_test.bin) | Compiled 64-byte machine code for single-step verification |
+| [`../src2/debugger/core_debug_ahb.v`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/core_debug_ahb.v) | Post-mortem AHB slave exposing GPRs, CSRs, micro-trace & crash latches |
+| [`../src2/debugger/core_step_controller.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/core_step_controller.sv) | Hardware Step FSM controller with `auto_halt_req_i` freeze on trap |
+| [`../src2/debugger/socdebug_adp_control.v`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/socdebug_adp_control.v) | ADP controller with `B`, `D`, and step GPO/GPI extensions |
+| [`../src2/debugger/socdebug_uart.v`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/socdebug_uart.v) | Glitch-free reconfigurable UART baud divider engine |
+| [`../src2/debugger/socdebug_ft1248_control.v`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/socdebug_ft1248_control.v) | Reconfigurable FT1248 clock divider |
+| [`../src2/debugger/tb/tb_debugger.sv`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/tb/tb_debugger.sv) | Self-checking simulation testbench (Parts 4 & 5) |
+| [`../src2/debugger/sw/dbg_cli.py`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/src2/debugger/sw/dbg_cli.py) | Python CLI supporting `step`, `step_cycle`, `get_dividers`, etc. |
+| [`test_step_and_clkdiv.py`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/test_step_and_clkdiv.py) | Automated Python test runner with Test Suite 4 for post-mortem debugging |
+| [`sim_step_and_clkdiv.sh`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/sim_step_and_clkdiv.sh) | Automated Vivado XSIM simulation script |
+| [`../software/step_test.S`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/software/step_test.S) | Dedicated RV32I assembly stepping verification program |
+| [`step_test.bin`](file:///home/23EC01043/Desktop/cores/Ganesh_CVW/cvw/1tops_soc/fpga/step_test.bin) | Compiled 64-byte machine code for single-step verification |

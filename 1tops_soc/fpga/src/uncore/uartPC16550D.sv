@@ -1,42 +1,6 @@
-///////////////////////////////////////////
-// uart.sv
-//
-// Written: David_Harris@hmc.edu 21 January 2021
-// Modified:
-//
-// Purpose: Universal Asynchronous Receiver/ Transmitter with FIFOs
-//          Emulates interface of Texas Instruments PC16550D
-//          https://media.digikey.com/pdf/Data%20Sheets/Texas%20Instruments%20PDFs/PC16550D.pdf
-//          Compatible with UART in Imperas Virtio model
-//
-//  Compatible with most of PC16550D with the following known exceptions:
-//   Generates 2 rather than 1.5 stop bits when 5-bit word length is selected and LCR[2] = 1
-//   Timeout not yet implemented
-//
-// Documentation: RISC-V System on Chip Design
-//
-// A component of the CORE-V-WALLY configurable RISC-V project.
-// https://github.com/openhwgroup/cvw
-//
-// Copyright (C) 2021-23 Harvey Mudd College & Oklahoma State University
-//
-// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
-//
-// Licensed under the Solderpad Hardware License v 2.1 (the “License”); you may not use this file
-// except in compliance with the License, or, at your option, the Apache License version 2.0. You
-// may obtain a copy of the License at
-//
-// https://solderpad.org/licenses/SHL-2.1/
-//
-// Unless required by applicable law or agreed to in writing, any work distributed under the
-// License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-// either express or implied. See the License for the specific language governing permissions
-// and limitations under the License.
-////////////////////////////////////////////////////////////////////////////////////////////////
-
 /* verilator lint_off UNOPTFLAT */
 
-module uartPC16550D #(parameter UART_PRESCALE) (
+module uartPC16550D #(parameter UART_PRESCALE = 1) (
   // Processor Interface
   input  logic       PCLK, PRESETn,                  // UART clock and active low reset
   input  logic [2:0] A,                              // address input (8 registers)
@@ -348,18 +312,16 @@ module uartPC16550D #(parameter UART_PRESCALE) (
   // tail is normally higher than head, but might wrap around.  unwrapped variable adds 16 to eliminate wrapping
   assign rxfifotailunwrapped = rxfifotail < rxfifohead ? {1'b1, rxfifotail} : {1'b0, rxfifotail};
   genvar i;
-  for (i=0; i<32; i++) begin : rxfull
-    if (i == 0) assign rxfullbitunwrapped[i] = (rxfifohead==0) & (rxfifotail != 0);
-    else        assign rxfullbitunwrapped[i] = ({1'b0,rxfifohead}==i | rxfullbitunwrapped[i-1]) & (rxfifotailunwrapped != i);
-  end
-  for (i=0; i<16; i++) begin : rx
-    assign RXerrbit[i]  = |rxfifo[i][10:8]; // are any of the error conditions set?
-    assign rxfullbit[i] = rxfullbitunwrapped[i] | rxfullbitunwrapped[i+16];
-  /*      if (i > 0)
-      assign rxfullbit[i] = ((rxfifohead==i) | rxfullbit[i-1]) & (rxfifotail != i);
-      else
-      assign rxfullbit[0] = ((rxfifohead==i) | rxfullbit[15]) & (rxfifotail != i);*/
-  end
+  generate
+    for (i=0; i<32; i++) begin : rxfull
+      if (i == 0) assign rxfullbitunwrapped[i] = (rxfifohead==0) & (rxfifotail != 0);
+      else        assign rxfullbitunwrapped[i] = ({1'b0,rxfifohead}==i | rxfullbitunwrapped[i-1]) & (rxfifotailunwrapped != i);
+    end
+    for (i=0; i<16; i++) begin : rx
+      assign RXerrbit[i]  = |rxfifo[i][10:8]; // are any of the error conditions set?
+      assign rxfullbit[i] = rxfullbitunwrapped[i] | rxfullbitunwrapped[i+16];
+    end
+  endgenerate
   assign rxfifohaserr   = |(RXerrbit & rxfullbit);
 
   // receive buffer register and ready bit
@@ -532,12 +494,18 @@ module uartPC16550D #(parameter UART_PRESCALE) (
   assign setSquashRXerrIP = ~MEMRb & (A==3'b101);
   assign resetSquashRXerrIP = (rxstate == UART_DONE);
   assign squashRXerrIP = (prevSquashRXerrIP | setSquashRXerrIP) & ~resetSquashRXerrIP;
-  flopr #(1) squashRXerrIPreg(PCLK, ~PRESETn, squashRXerrIP, prevSquashRXerrIP);
+  always_ff @(posedge PCLK or negedge PRESETn) begin
+    if (~PRESETn) prevSquashRXerrIP <= 1'b0;
+    else          prevSquashRXerrIP <= squashRXerrIP;
+  end
   // Side effect of reading IIR is lowering THRE_IP if most significant intr
   assign setSquashTHRE_IP = ~MEMRb & (A==3'b010) & (intrID==3'h1); // there's a 1-cycle delay on set squash so that THRE_IP doesn't change during the process of reading IIR (otherwise combinational loop)
   assign resetSquashTHRE_IP = ~MEMWb & (A==3'b000) & ~DLAB;
   assign squashTHRE_IP = prevSquashTHRE_IP & ~resetSquashTHRE_IP;
-  flopr #(1) squashTHRE_IPreg(PCLK, ~PRESETn, squashTHRE_IP | setSquashTHRE_IP, prevSquashTHRE_IP);
+  always_ff @(posedge PCLK or negedge PRESETn) begin
+    if (~PRESETn) prevSquashTHRE_IP <= 1'b0;
+    else          prevSquashTHRE_IP <= squashTHRE_IP | setSquashTHRE_IP;
+  end
 
   ///////////////////////////////////////////
   // modem control logic

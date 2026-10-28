@@ -34,48 +34,40 @@ if {[file exists $proj_dir]} {
 # 2. Create fresh project
 create_project $proj_name $proj_dir -part $part_num -force
 
-# 3. Add configuration include paths
-set inc_dirs [list [file normalize "./config"] [file normalize "./src"] [file normalize "./src/debugger"] [file normalize "./src/core"] [file normalize "./src/core/components"] [file normalize "./top"]]
+# 3. Add configuration include paths (strictly from ../src2)
+set inc_dirs [list \
+    [file normalize "../src2/components"] \
+    [file normalize "../src2/debugger"] \
+    [file normalize "../src2/main"] \
+    [file normalize "../src2/main/soc"] \
+    [file normalize "../src2/uncore"] \
+    [file normalize "./top"]]
 set_property include_dirs $inc_dirs [get_filesets sources_1]
 if {[llength [get_filesets -quiet sim_1]] > 0} {
     set_property include_dirs $inc_dirs [get_filesets sim_1]
 }
 
-
-# 4. Add configuration header files (.vh)
-set vh_files [glob -nocomplain "./config/*.vh"]
-if {[llength $vh_files] > 0} {
-    add_files -norecurse -fileset sources_1 {*}$vh_files
-    set_property file_type {Verilog Header} [get_files -of_objects [get_filesets sources_1] -filter {NAME =~ "*.vh"}]
-}
-
-# 5. Add Core Package cvw.sv
-if {[file exists "./src/cvw.sv"]} {
-    add_files -norecurse -fileset sources_1 "./src/cvw.sv"
-}
-
-# 6. Add Top-Level FPGA Wrapper
+# 4. Add Top-Level FPGA Wrapper
 if {[file exists "./top/wally_soc_fpga_top.sv"]} {
     add_files -norecurse -fileset sources_1 "./top/wally_soc_fpga_top.sv"
 }
 
-# 7. Add all SystemVerilog (.sv) and Verilog (.v) sources recursively
+# 5. Add all SystemVerilog (.sv) and Verilog (.v) sources strictly from ../src2/
 set patterns [list \
-    "./src/*.sv"       "./src/*.v" \
-    "./src/*/*.sv"     "./src/*/*.v" \
-    "./src/*/*/*.sv"   "./src/*/*/*.v" \
-    "./src/*/*/*/*.sv" "./src/*/*/*/*.v" \
+    "../src2/components/*.v" \
+    "../src2/debugger/*.v" \
+    "../src2/debugger/*.sv" \
+    "../src2/main/*.v" \
+    "../src2/main/soc/*.v" \
+    "../src2/uncore/*.sv" \
 ]
 
 set all_files {}
 foreach pat $patterns {
     set match_files [glob -nocomplain $pat]
     foreach f $match_files {
-        # Exclude duplicate cvw.sv, simulation testbenches, BFMs, and unused ASIC foundry hard macro wrappers
-        if {[string match "*cvw.sv" $f] ||
-            [string match "*tb_*" $f] || [string match "*_stream.v" $f] || [string match "*/tb/*" $f] || [string match "*testbench/*" $f] ||
-            [string match "*128x32*" $f] || [string match "*128x64*" $f] || [string match "*64x128*" $f] || [string match "*64x44*" $f] || [string match "*64x22*" $f] ||
-            [string match "*generic/adder.sv" $f] || [string match "*generic/decoder.sv" $f]} {
+        # Exclude simulation testbenches and FTDI stream generators
+        if {[string match "*tb_*" $f] || [string match "*_stream.v" $f] || [string match "*/tb/*" $f]} {
             continue
         }
         lappend all_files $f
