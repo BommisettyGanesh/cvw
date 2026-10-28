@@ -36,6 +36,7 @@ module core_step_controller #(
     input  wire        halt_req_i,       // GPO8[1]: 1 = Core Halt requested, 0 = Core Free Run
     input  wire        step_req_i,       // GPO8[2]: 0->1 transition triggers a step
     input  wire        step_mode_i,      // GPO8[3]: 0 = Instruction Step, 1 = Clock Cycle Step
+    input  wire        auto_halt_req_i = 1'b0,  // 1 = Auto-halt on trap/fault (default 0)
 
     // Core Status / Feedback Inputs
     input  wire        instr_retired_i,  // 1-cycle strobe from CPU core when instruction retires
@@ -103,14 +104,14 @@ module core_step_controller #(
 
         case (state)
             STATE_RUN: begin
-                // Transition to halted when debugger asserts halt_req_i
-                if (halt_req_i) begin
+                // Transition to halted when debugger asserts halt_req_i or hardware auto-halt triggers
+                if (halt_req_i || auto_halt_req_i) begin
                     next_state = STATE_HALTED;
                 end
             end
 
             STATE_HALTED: begin
-                if (!halt_req_i) begin
+                if (!halt_req_i && !auto_halt_req_i) begin
                     // Host released halt -> resume free execution
                     next_state = STATE_RUN;
                 end else if (step_trigger) begin
@@ -120,7 +121,7 @@ module core_step_controller #(
             end
 
             STATE_STEPPING: begin
-                if (!halt_req_i) begin
+                if (!halt_req_i && !auto_halt_req_i) begin
                     // User aborted halt during stepping
                     next_state = STATE_RUN;
                 end else if (step_mode_i == 1'b1) begin
@@ -136,7 +137,7 @@ module core_step_controller #(
 
             STATE_DONE: begin
                 // Return to halted state (re-freezing pipeline)
-                if (!halt_req_i) begin
+                if (!halt_req_i && !auto_halt_req_i) begin
                     next_state = STATE_RUN;
                 end else begin
                     next_state = STATE_HALTED;

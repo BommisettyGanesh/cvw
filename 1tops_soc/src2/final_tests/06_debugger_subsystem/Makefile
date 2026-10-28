@@ -3,11 +3,9 @@
 # =============================================================================
 
 ROOT_DIR := $(abspath ../..)
-QUESTA_BIN ?= /home/ganesh/altera_lite/25.1std/questa_fse/bin
-
-VLIB := $(QUESTA_BIN)/vlib
-VLOG := $(QUESTA_BIN)/vlog
-VSIM := $(QUESTA_BIN)/vsim
+VLIB ?= vlib
+VLOG ?= vlog
+VSIM ?= vsim
 
 .PHONY: all test_all test_features test_adp_protocol clean
 

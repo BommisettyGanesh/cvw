@@ -48,7 +48,29 @@ module datapath #(parameter RESET_PC = 32'h0000_0000) (
 
     // Trap Monitoring Outputs
     output        TrapM,
-    output        mretM_out
+    output        mretM_out,
+
+    // Post-Mortem Debug Interface
+    input  [4:0]  dbg_rf_raddr,
+    output [31:0] dbg_rf_rdata,
+    output [31:0] dbg_PCD,
+    output [31:0] dbg_PCE,
+    output [31:0] dbg_PCM,
+    output [31:0] dbg_InstrM,
+    output [31:0] dbg_TrapCauseM,
+    output [31:0] dbg_TrapValM,
+    output [31:0] dbg_mstatus,
+    output [31:0] dbg_mcause,
+    output [31:0] dbg_mtval,
+    output [31:0] dbg_mepc,
+    output [31:0] dbg_mtvec,
+    output [31:0] dbg_mie,
+    output [31:0] dbg_mip,
+    output [31:0] dbg_mscratch,
+    output [63:0] dbg_cycle_cnt,
+    output [63:0] dbg_instret_cnt,
+    output [4:0]  dbg_stall_flags,
+    output [2:0]  dbg_flush_flags
 );
 
 wire [31:0] PCPlus4, PCTargetE, AuiPC, lAuiPC, lAuiPCM, lAuiPCW;
@@ -156,7 +178,7 @@ adder #(32) pcaddbranch(PCE, ImmExtE, PCTargetE);
 // =========================================================================
 // DECODE STAGE (D)
 // =========================================================================
-reg_file   rf(clk, RegWriteW, InstrD[19:15], InstrD[24:20], RdW, ResultW, ReadData1, ReadData2);
+reg_file   rf(clk, RegWriteW, InstrD[19:15], InstrD[24:20], RdW, ResultW, ReadData1, ReadData2, dbg_rf_raddr, dbg_rf_rdata);
 imm_extend ext(InstrD[31:7], ImmSrc, ImmExtD);
 
 wire uses_rs1D = (InstrD[6:0] != 7'b0110111) && (InstrD[6:0] != 7'b0010111) && (InstrD[6:0] != 7'b1101111);
@@ -345,6 +367,11 @@ csr_file csr_inst (
     .mip(mip),
     .mtvec(mtvec),
     .mepc(mepc),
+    .mcause_out(dbg_mcause),
+    .mtval_out(dbg_mtval),
+    .mscratch_out(dbg_mscratch),
+    .cycle_cnt_out(dbg_cycle_cnt),
+    .instret_cnt_out(dbg_instret_cnt),
     .ValidM(ValidM)
 );
 
@@ -422,5 +449,20 @@ hazard hazardunit(
     .StallF(StallF), .StallD(StallD), .StallE(StallE), .StallM(StallM), .StallW(StallW),
     .FlushD(FlushD), .FlushE(FlushE), .FlushM(FlushM)
 );
+
+// Post-Mortem Debug Interface Assignments
+assign dbg_PCD         = PCD;
+assign dbg_PCE         = PCE;
+assign dbg_PCM         = PCM;
+assign dbg_InstrM      = InstrM;
+assign dbg_TrapCauseM  = TrapCauseM;
+assign dbg_TrapValM    = TrapValM;
+assign dbg_mstatus     = mstatus;
+assign dbg_mepc        = mepc;
+assign dbg_mtvec       = mtvec;
+assign dbg_mie         = mie;
+assign dbg_mip         = mip;
+assign dbg_stall_flags = {StallW, StallM, StallE, StallD, StallF};
+assign dbg_flush_flags = {FlushM, FlushE, FlushD};
 
 endmodule

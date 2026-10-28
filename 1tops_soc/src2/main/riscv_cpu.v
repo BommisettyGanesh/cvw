@@ -42,7 +42,29 @@ module riscv_cpu #(parameter RESET_PC = 32'h0000_0000) (
 
     // Trap Monitoring Output
     output            TrapM,
-    output            mretM
+    output            mretM,
+
+    // Post-Mortem Debug Interface
+    input      [ 4:0] dbg_rf_raddr,
+    output     [31:0] dbg_rf_rdata,
+    output     [31:0] dbg_PCD,
+    output     [31:0] dbg_PCE,
+    output     [31:0] dbg_PCM,
+    output     [31:0] dbg_InstrM,
+    output     [31:0] dbg_TrapCauseM,
+    output     [31:0] dbg_TrapValM,
+    output     [31:0] dbg_mstatus,
+    output     [31:0] dbg_mcause,
+    output     [31:0] dbg_mtval,
+    output     [31:0] dbg_mepc,
+    output     [31:0] dbg_mtvec,
+    output     [31:0] dbg_mie,
+    output     [31:0] dbg_mip,
+    output     [31:0] dbg_mscratch,
+    output     [63:0] dbg_cycle_cnt,
+    output     [63:0] dbg_instret_cnt,
+    output     [ 4:0] dbg_stall_flags,
+    output     [ 2:0] dbg_flush_flags
 );
 
 wire        ALUSrc, RegWrite, MemWrite, Branch, Jump, Jalr;
@@ -120,7 +142,27 @@ datapath #(RESET_PC) dp (
     .ExternalStall(ExternalStall),
     .InstrRetired(InstrRetired),
     .TrapM(TrapM),
-    .mretM_out(mretM)
+    .mretM_out(mretM),
+    .dbg_rf_raddr(dbg_rf_raddr),
+    .dbg_rf_rdata(dbg_rf_rdata),
+    .dbg_PCD(dbg_PCD),
+    .dbg_PCE(dbg_PCE),
+    .dbg_PCM(dbg_PCM),
+    .dbg_InstrM(dbg_InstrM),
+    .dbg_TrapCauseM(dbg_TrapCauseM),
+    .dbg_TrapValM(dbg_TrapValM),
+    .dbg_mstatus(dbg_mstatus),
+    .dbg_mcause(dbg_mcause),
+    .dbg_mtval(dbg_mtval),
+    .dbg_mepc(dbg_mepc),
+    .dbg_mtvec(dbg_mtvec),
+    .dbg_mie(dbg_mie),
+    .dbg_mip(dbg_mip),
+    .dbg_mscratch(dbg_mscratch),
+    .dbg_cycle_cnt(dbg_cycle_cnt),
+    .dbg_instret_cnt(dbg_instret_cnt),
+    .dbg_stall_flags(dbg_stall_flags),
+    .dbg_flush_flags(dbg_flush_flags)
 );
 
 endmodule

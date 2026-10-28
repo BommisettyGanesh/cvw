@@ -162,6 +162,9 @@ module riscv_soc_ahb #(
     wire        dbg_step_done;
     wire        core_stall_effective;
     wire        dbg_core_halt_status;
+    wire        auto_halt_trap;
+    wire        dbg_trap_latched;
+    wire [ 3:0] dbg_fault_flags;
 
     // 1. Dual-Protocol Hardware Debugger Subsystem (UART + FT1248)
     riscv_debugger_top #(
@@ -199,7 +202,7 @@ module riscv_soc_ahb #(
         .DEBUG_HREADY(dbg_HREADY),
         .DEBUG_HRESP(dbg_HRESP),
         .GPO8(),
-        .GPI8({5'b0, dbg_step_done, dbg_step_busy, dbg_core_halt_status})
+        .GPI8({dbg_fault_flags, dbg_trap_latched, dbg_step_done, dbg_step_busy, dbg_core_halt_status})
     );
 
     // 1.1 Step Debugging FSM Controller Instance
@@ -214,6 +217,7 @@ module riscv_soc_ahb #(
         .halt_req_i(dbg_core_halt),
         .step_req_i(dbg_core_step),
         .step_mode_i(dbg_core_step_mode),
+        .auto_halt_req_i(auto_halt_trap),
         .instr_retired_i(core_instr_retired),
         .core_stall_ext_i(1'b0),
         .core_stall_o(core_stall_effective),
@@ -288,6 +292,37 @@ module riscv_soc_ahb #(
     assign HWSTRB = (dbg_core_halt_status) ? dbg_HWSTRB : core_HWSTRB;
 
     // =========================================================================
+    // Core Post-Mortem Debug Wires
+    // =========================================================================
+    wire [ 4:0] dbg_rf_raddr;
+    wire [31:0] dbg_rf_rdata;
+    wire [31:0] core_PCF;
+    wire [31:0] core_PCD;
+    wire [31:0] core_PCE;
+    wire [31:0] core_PCM;
+    wire [31:0] core_InstrM;
+    wire [31:0] core_TrapCauseM;
+    wire [31:0] core_TrapValM;
+    wire [31:0] core_mstatus;
+    wire [31:0] core_mcause;
+    wire [31:0] core_mtval;
+    wire [31:0] core_mepc;
+    wire [31:0] core_mtvec;
+    wire [31:0] core_mie;
+    wire [31:0] core_mip;
+    wire [31:0] core_mscratch;
+    wire [63:0] core_cycle_cnt;
+    wire [63:0] core_instret_cnt;
+    wire [ 4:0] core_stall_flags;
+    wire [ 2:0] core_flush_flags;
+
+    // Core Debug AHB Slave Interconnect Wires
+    wire        HSELCOREDBG;
+    wire [31:0] HRDATACOREDBG;
+    wire        HREADYCOREDBG;
+    wire        HRESPCOREDBG;
+
+    // =========================================================================
     // 3. Pipelined Processor Core (Wally Core Equivalent)
     // =========================================================================
     riscv_cpu #(RESET_PC) cpu (
@@ -305,7 +340,7 @@ module riscv_soc_ahb #(
         .HRDATA(core_HRDATA),
         .HREADY(core_HREADY),
         .HRESP(core_HRESP),
-        .PC(),
+        .PC(core_PCF),
         .PCW(PCW),
         .ALUResultW(),
         .WriteDataW(),
@@ -317,7 +352,27 @@ module riscv_soc_ahb #(
         .ExternalStall(core_stall_effective),
         .InstrRetired(core_instr_retired),
         .TrapM(TrapM),
-        .mretM(mretM)
+        .mretM(mretM),
+        .dbg_rf_raddr(dbg_rf_raddr),
+        .dbg_rf_rdata(dbg_rf_rdata),
+        .dbg_PCD(core_PCD),
+        .dbg_PCE(core_PCE),
+        .dbg_PCM(core_PCM),
+        .dbg_InstrM(core_InstrM),
+        .dbg_TrapCauseM(core_TrapCauseM),
+        .dbg_TrapValM(core_TrapValM),
+        .dbg_mstatus(core_mstatus),
+        .dbg_mcause(core_mcause),
+        .dbg_mtval(core_mtval),
+        .dbg_mepc(core_mepc),
+        .dbg_mtvec(core_mtvec),
+        .dbg_mie(core_mie),
+        .dbg_mip(core_mip),
+        .dbg_mscratch(core_mscratch),
+        .dbg_cycle_cnt(core_cycle_cnt),
+        .dbg_instret_cnt(core_instret_cnt),
+        .dbg_stall_flags(core_stall_flags),
+        .dbg_flush_flags(core_flush_flags)
     );
 
     // =========================================================================
@@ -350,6 +405,10 @@ module riscv_soc_ahb #(
         .HRDATAEXT(HRDATAEXT),
         .HREADYEXT(HREADYEXT),
         .HRESPEXT(HRESPEXT),
+        .HSELCOREDBG(HSELCOREDBG),
+        .HRDATACOREDBG(HRDATACOREDBG),
+        .HREADYCOREDBG(HREADYCOREDBG),
+        .HRESPCOREDBG(HRESPCOREDBG),
         .MTimerInt(MTimerInt),
         .MSwInt(MSwInt),
         .MExtInt(MExtInt_uncore),
@@ -372,7 +431,59 @@ module riscv_soc_ahb #(
     );
 
     // =========================================================================
-    // 3. External AHB Slave / Accelerator Interface (Wally 1tops_soc Multiplier)
+    // 3. Core Post-Mortem Debugging AHB Slave (0x0B00_0000 - 0x0B00_0FFF)
+    // =========================================================================
+    core_debug_ahb #(
+        .DATA_WIDTH(32)
+    ) u_core_dbg (
+        .HCLK(HCLK),
+        .HRESETn(HRESETn),
+        .HSEL(HSELCOREDBG),
+        .HADDR(HADDR),
+        .HWDATA(HWDATA),
+        .HWRITE(HWRITE),
+        .HSIZE(HSIZE),
+        .HBURST(HBURST),
+        .HPROT(HPROT),
+        .HTRANS(HTRANS),
+        .HREADY(HREADY),
+        .HREADYOUT(HREADYCOREDBG),
+        .HRESP(HRESPCOREDBG),
+        .HRDATA(HRDATACOREDBG),
+        .dbg_rf_raddr(dbg_rf_raddr),
+        .dbg_rf_rdata(dbg_rf_rdata),
+        .PCF(core_PCF),
+        .PCD(core_PCD),
+        .PCE(core_PCE),
+        .PCM(core_PCM),
+        .PCW(PCW),
+        .InstrD(32'd0),
+        .InstrM(core_InstrM),
+        .StallFlags(core_stall_flags),
+        .FlushFlags(core_flush_flags),
+        .ExternalStall(core_stall_effective),
+        .InstrRetired(core_instr_retired),
+        .TrapM(TrapM),
+        .mretM(mretM),
+        .TrapCauseM(core_TrapCauseM),
+        .TrapValM(core_TrapValM),
+        .mstatus(core_mstatus),
+        .mcause(core_mcause),
+        .mtval(core_mtval),
+        .mepc(core_mepc),
+        .mtvec(core_mtvec),
+        .mie(core_mie),
+        .mip(core_mip),
+        .mscratch(core_mscratch),
+        .cycle_cnt(core_cycle_cnt),
+        .instret_cnt(core_instret_cnt),
+        .auto_halt_trap_o(auto_halt_trap),
+        .trap_latched_o(dbg_trap_latched),
+        .fault_flags_o(dbg_fault_flags)
+    );
+
+    // =========================================================================
+    // 4. External AHB Slave / Accelerator Interface (Wally 1tops_soc Multiplier)
     // =========================================================================
     // Space: 0x3000_0000 - 0x30FF_FFFF (Wally EXT_MEM space).
     // Provides a dedicated hardware socket to connect custom AHB accelerator slaves

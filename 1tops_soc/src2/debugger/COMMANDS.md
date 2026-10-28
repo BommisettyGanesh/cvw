@@ -157,6 +157,7 @@ The debugger automatically adjusts AHB transfer size (`HSIZE` = byte, halfword, 
 | Address Range | Size | Region | Purpose |
 | :--- | :--- | :--- | :--- |
 | `0x0000_1000 - 0x0000_1FFF` | 4 KB | Boot ROM | Initial boot code |
+| `0x0B00_0000 - 0x0B00_0FFF` | 4 KB | Core Debug & Post-Mortem | CPU GPRs (x0-x31), CSRs, Trace Buffer & Crash Trap Registers |
 | `0x1000_0000 - 0x1000_0007` | 8 B | 16550 Uncore UART | Application printf/console UART |
 | `0x3000_0000` | 4 B | Multiplier Op A | Accelerator operand A / Control |
 | `0x3000_0004` | 4 B | Multiplier Op B | Accelerator operand B / Status |
@@ -167,3 +168,138 @@ The debugger automatically adjusts AHB transfer size (`HSIZE` = byte, halfword, 
 | `0x3080_0000 - 0x30FF_FFFF` | ~8 MB | Accelerator Output Buffer | Inference / results buffer |
 | `0x8000_0000 - 0x8000_1FFF` | 8 KB | Instruction SRAM (`ram_i`) | Program code (reset vector) |
 | `0x8000_2000 - 0x8000_3FFF` | 8 KB | Data SRAM (`ram_d`) | Program data, heap, and stack |
+
+---
+
+## 8. Post-Mortem Crash Debugging & Core Inspection (`0x0B00_0000` Aperture)
+
+The **Core Debug AHB Slave** (`core_debug_ahb.v`) exposes the internal state of the RISC-V CPU pipeline, privileged control registers (CSRs), register file, and execution history directly onto the AHB bus at base address `0x0B00_0000`.
+
+### 8.1 Register Map (`Base: 0x0B00_0000`)
+
+| Offset Range | Register Name | Access | Description |
+| :--- | :--- | :---: | :--- |
+| `0x000 - 0x07C` | `GPR[0]` - `GPR[31]` | R | **General-Purpose Registers `x0` - `x31`**: Directly read from regfile auxiliary port without disturbing pipeline. |
+| `0x080` | `PC_FETCH` (`PCF`) | R | Program Counter currently in Instruction Fetch stage |
+| `0x084` | `PC_DECODE` (`PCD`) | R | Program Counter currently in Instruction Decode stage |
+| `0x088` | `PC_EXECUTE` (`PCE`) | R | Program Counter currently in Execute / ALU stage |
+| `0x08C` | `PC_MEMORY` (`PCM`) | R | Program Counter currently in Memory access stage |
+| `0x090` | `PC_WRITEBACK` (`PCW`) | R | Last committed Program Counter retiring from Writeback stage |
+| `0x094` | `INSTR_DECODE` (`InstrD`) | R | Raw 32-bit instruction word currently in Decode stage |
+| `0x098` | `INSTR_MEMORY` (`InstrM`) | R | Raw 32-bit instruction word currently in Memory stage |
+| `0x09C` | `PIPELINE_STATUS` | R | Pipeline Hazard Status: `[9:5]` = `StallFlags[4:0]`, `[4:0]` = `FlushFlags[4:0]` |
+| `0x0A0` | `CSR_MSTATUS` | R | Machine Status CSR (`mstatus`) |
+| `0x0A4` | `CSR_MCAUSE` | R | Machine Cause CSR (`mcause`) — dynamic current value |
+| `0x0A8` | `CSR_MTVAL` | R | Machine Trap Value CSR (`mtval`) — dynamic current value |
+| `0x0AC` | `CSR_MEPC` | R | Machine Exception Program Counter CSR (`mepc`) |
+| `0x0B0` | `CSR_MTVEC` | R | Machine Trap-Vector Base-Address CSR (`mtvec`) |
+| `0x0B4` | `CSR_MIE` | R | Machine Interrupt Enable CSR (`mie`) |
+| `0x0B8` | `CSR_MIP` | R | Machine Interrupt Pending CSR (`mip`) |
+| `0x0BC` | `CSR_MSCRATCH` | R | Machine Scratchpad CSR (`mscratch`) |
+| `0x0C0` | `CYCLE_LOW` | R | 64-bit Hardware Cycle Counter [31:0] |
+| `0x0C4` | `CYCLE_HIGH` | R | 64-bit Hardware Cycle Counter [63:32] |
+| `0x0C8` | `INSTRET_LOW` | R | 64-bit Retired Instruction Counter [31:0] |
+| `0x0CC` | `INSTRET_HIGH` | R | 64-bit Retired Instruction Counter [63:32] |
+| `0x0D0` | `DBG_CTRL` | R/W | Control Register:<br/>- Bit 0: `auto_halt_en` (1 = freeze core upon trap, default 1)<br/>- Bit 1: `trap_clr` (write 1 to clear sticky crash latches) |
+| `0x0D4` | `TRAP_CAUSE` | R | **Sticky Latched Crash Cause**: Captures `mcause` at the exact cycle of exception |
+| `0x0D8` | `TRAP_VAL` | R | **Sticky Latched Fault Value**: Captures `mtval` (faulting address or illegal instruction) |
+| `0x0DC` | `TRAP_PC` | R | **Sticky Latched Faulting PC**: Captures `PCM` (PC of instruction that caused the trap) |
+| `0x100 - 0x13C` | `TRACE_BUF[0..15]` | R | **16-Entry Circular Micro-Trace Buffer**: Contains the last 16 retired instruction PCs prior to crash |
+| `0x140` | `TRACE_STATUS` | R | Trace Buffer Status: `[4]` = `wrap_flag`, `[3:0]` = `write_pointer` |
+
+---
+
+### 8.2 Real-Time Crash Detection via Status Query (`C`)
+
+The debugger controller continuously samples CPU status flags into `GPI8`:
+- **`GPI8[0]`**: `core_halted` (1 when pipeline is frozen)
+- **`GPI8[1]`**: `step_busy` (1 when single-step sequence is active)
+- **`GPI8[2]`**: `step_done` (1 when step completed)
+- **`GPI8[3]`**: **`dbg_trap_latched`** (1 indicates an unhandled trap/crash occurred and crash registers are frozen)
+- **`GPI8[4]`**: `IllegalInstrD` (fault flag: illegal opcode decoded)
+- **`GPI8[5]`**: `MisalignD` (fault flag: misaligned jump/branch)
+- **`GPI8[6]`**: `MemFaultM` (fault flag: bus/memory access fault)
+- **`GPI8[7]`**: `TrapM` (dynamic active trap signal)
+
+Querying status via `C` immediately flags crashes:
+```
+] C
+C 0x19000000
+```
+*(Here `GPI8 = 0x19`: Bit 0 = Halted, Bit 3 = Trap Latched, Bit 4 = Illegal Instruction).*
+
+---
+
+### 8.3 Post-Mortem Crash Analysis Workflow via ADP
+
+When the target crashes or stops unexpectedly, follow this sequence using standard ADP commands:
+
+#### Step 1: Confirm Crash & Check Latched Cause
+```
+] C
+C 0x19000000       <-- Core is halted and trap is latched (0x19 = 8'b00011001)
+
+] A 0B0000D4       <-- Point to TRAP_CAUSE
+A 0x0B0000D4
+] R                <-- Read latched mcause
+R 0x00000002       <-- mcause = 2: Illegal Instruction Exception!
+
+] A 0B0000DC       <-- Point to TRAP_PC
+A 0x0B0000DC
+] R                <-- Read latched faulting PC
+R 0x80000014       <-- Crash occurred at address 0x8000_0014
+```
+
+#### Step 2: Inspect Register File State (All 32 Registers)
+Dump all 32 GPRs in one burst using `R 00000020` (32 words):
+```
+] A 0B000000       <-- Base of GPR table (x0)
+A 0x0B000000
+] R 00000020       <-- Read 32 words (x0 through x31)
+R 0x00000000       <-- x0  (always 0)
+R 0x0000000a       <-- x1  (e.g., 10)
+R 0x00000014       <-- x2  (e.g., 20)
+R 0x0000001e       <-- x3  (e.g., 30)
+...
+R 0x80003ff0       <-- x2 (sp)
+```
+
+#### Step 3: Inspect Pipeline Registers and Opcodes
+```
+] A 0B000080       <-- Point to PC_FETCH
+A 0x0B000080
+] R 00000008       <-- Read 8 words: PCF, PCD, PCE, PCM, PCW, InstrD, InstrM, PipelineStatus
+R 0x8000001c       <-- PCF
+R 0x80000018       <-- PCD
+R 0x80000014       <-- PCE
+R 0x80000014       <-- PCM (Faulting instruction stage)
+R 0x80000010       <-- PCW (Last successfully retired instruction)
+R 0x00200073       <-- InstrD (Offending opcode in decode)
+R 0x00200073       <-- InstrM (Offending opcode in memory stage)
+R 0x000003e0       <-- PipelineStatus: StallFlags=5'b11111 (all stages frozen)
+```
+
+#### Step 4: Inspect 16-Entry Micro-Trace Buffer (Pre-Crash History)
+Read the last 16 committed Program Counters prior to the crash to observe control flow path:
+```
+] A 0B000100       <-- Point to Micro-Trace Buffer
+A 0x0B000100
+] R 00000010       <-- Read 16 words (trace history)
+R 0x80000000       <-- PC history entry 0
+R 0x80000004       <-- PC history entry 1
+R 0x80000008       <-- PC history entry 2
+R 0x8000000c       <-- PC history entry 3
+R 0x80000010       <-- PC history entry 4 (last commit before crash)
+...
+```
+
+#### Step 5: Clear Trap and Re-arm
+To clear the latched trap and reset the sticky registers:
+```
+] A 0B0000D0       <-- DBG_CTRL register
+A 0x0B0000D0
+] W 00000003       <-- Assert trap_clr (bit 1) and keep auto_halt_en (bit 0)
+W 0x00000003
+```
+After clearing, the core can be reset via `C 0201` / `C 0101` or resumed via `C 0102`.
+

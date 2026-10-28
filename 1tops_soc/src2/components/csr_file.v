@@ -31,7 +31,14 @@ module csr_file #(parameter WIDTH = 32) (
     output reg [WIDTH-1:0]    mie,
     output     [WIDTH-1:0]    mip,
     output reg [WIDTH-1:0]    mtvec,
-    output reg [WIDTH-1:0]    mepc
+    output reg [WIDTH-1:0]    mepc,
+
+    // Post-Mortem Crash & State Inspection Outputs
+    output     [WIDTH-1:0]    mcause_out,
+    output     [WIDTH-1:0]    mtval_out,
+    output     [WIDTH-1:0]    mscratch_out,
+    output     [63:0]         cycle_cnt_out,
+    output     [63:0]         instret_cnt_out
 );
 
     // =========================================================================
@@ -53,6 +60,12 @@ module csr_file #(parameter WIDTH = 32) (
     // 64-bit Hardware Performance & Cycle Counters (Zicntr)
     reg [63:0] cycle_cnt;      // 0xC00 (cycle), 0xC80 (cycleh)
     reg [63:0] instret_cnt;    // 0xC02 (instret), 0xC82 (instreth)
+
+    assign mcause_out      = mcause;
+    assign mtval_out       = mtval;
+    assign mscratch_out    = mscratch;
+    assign cycle_cnt_out   = cycle_cnt;
+    assign instret_cnt_out = instret_cnt;
 
     // Hardware Interrupt Pending Register (mip)
     // MEIP (bit 11), MTIP (bit 7), MSIP (bit 3) directly reflect interrupt inputs

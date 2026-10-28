@@ -38,6 +38,12 @@ module uncore #(
     input  logic                 HREADYEXT,
     input  logic                 HRESPEXT,
 
+    // Core Post-Mortem Debug Interface (0x0B00_0000 - 0x0B00_0FFF)
+    output logic                 HSELCOREDBG,
+    input  logic [XLEN-1:0]      HRDATACOREDBG,
+    input  logic                 HREADYCOREDBG,
+    input  logic                 HRESPCOREDBG,
+
     // Interrupt & Timer Signals to Core
     output logic                 MTimerInt,
     output logic                 MSwInt,
@@ -69,17 +75,19 @@ module uncore #(
     // =========================================================================
     // 1. AHB Address Decoding
     // =========================================================================
-    wire HSELRam_I   = (HADDR >= IRAM_BASE && HADDR < (IRAM_BASE + IRAM_SIZE_BYTES));
-    wire HSELRam_D   = (HADDR >= DRAM_BASE && HADDR < (DRAM_BASE + DRAM_SIZE_BYTES));
-    wire HSELEXT_int = (HADDR >= 32'h3000_0000 && HADDR <= 32'h30FF_FFFF);
-    wire HSELBootRom = (HADDR >= 32'h0000_1000 && HADDR <= 32'h0000_1FFF);
-    wire HSELCLINT   = (HADDR >= 32'h0200_0000 && HADDR <= 32'h0200_FFFF);
-    wire HSELPLIC    = (HADDR >= 32'h0C00_0000 && HADDR <= 32'h0FFF_FFFF);
-    wire HSELUART    = (HADDR >= 32'h1000_0000 && HADDR <= 32'h1000_0FFF);
-    wire HSELSPI     = (HADDR >= 32'h1004_0000 && HADDR <= 32'h1004_0FFF);
-    wire HSELGPIO    = (HADDR >= 32'h1006_0000 && HADDR <= 32'h1006_0FFF);
+    wire HSELRam_I      = (HADDR >= IRAM_BASE && HADDR < (IRAM_BASE + IRAM_SIZE_BYTES));
+    wire HSELRam_D      = (HADDR >= DRAM_BASE && HADDR < (DRAM_BASE + DRAM_SIZE_BYTES));
+    wire HSELEXT_int    = (HADDR >= 32'h3000_0000 && HADDR <= 32'h30FF_FFFF);
+    wire HSELBootRom    = (HADDR >= 32'h0000_1000 && HADDR <= 32'h0000_1FFF);
+    wire HSELCLINT      = (HADDR >= 32'h0200_0000 && HADDR <= 32'h0200_FFFF);
+    wire HSELPLIC       = (HADDR >= 32'h0C00_0000 && HADDR <= 32'h0FFF_FFFF);
+    wire HSELUART       = (HADDR >= 32'h1000_0000 && HADDR <= 32'h1000_0FFF);
+    wire HSELSPI        = (HADDR >= 32'h1004_0000 && HADDR <= 32'h1004_0FFF);
+    wire HSELGPIO       = (HADDR >= 32'h1006_0000 && HADDR <= 32'h1006_0FFF);
+    wire HSELCOREDBG_int= (HADDR >= 32'h0B00_0000 && HADDR <= 32'h0B00_0FFF);
 
-    assign HSELEXT = HSELEXT_int;
+    assign HSELEXT     = HSELEXT_int;
+    assign HSELCOREDBG = HSELCOREDBG_int;
 
     localparam APB_PERIPHS = 5;
     wire [APB_PERIPHS-1:0] HSEL_APB = {HSELGPIO, HSELSPI, HSELUART, HSELPLIC, HSELCLINT};
@@ -88,7 +96,7 @@ module uncore #(
     // =========================================================================
     // 2. Address Decoder Delay Registers for AHB Data Phase
     // =========================================================================
-    logic HSELRam_ID, HSELRam_DD, HSELEXTD, HSELBootRomD, HSELBRIDGED, HSELNoneD;
+    logic HSELRam_ID, HSELRam_DD, HSELEXTD, HSELBootRomD, HSELBRIDGED, HSELCOREDBGD, HSELNoneD;
 
     always_ff @(posedge HCLK or negedge HRESETn) begin
         if (!HRESETn) begin
@@ -97,6 +105,7 @@ module uncore #(
             HSELEXTD      <= 1'b0;
             HSELBootRomD  <= 1'b0;
             HSELBRIDGED   <= 1'b0;
+            HSELCOREDBGD  <= 1'b0;
             HSELNoneD     <= 1'b1;
         end else if (HREADY) begin
             HSELRam_ID    <= HSELRam_I;
@@ -104,7 +113,8 @@ module uncore #(
             HSELEXTD      <= HSELEXT_int;
             HSELBootRomD  <= HSELBootRom;
             HSELBRIDGED   <= HSELBRIDGE;
-            HSELNoneD     <= !(HSELRam_I | HSELRam_D | HSELEXT_int | HSELBootRom | HSELBRIDGE);
+            HSELCOREDBGD  <= HSELCOREDBG_int;
+            HSELNoneD     <= !(HSELRam_I | HSELRam_D | HSELEXT_int | HSELBootRom | HSELBRIDGE | HSELCOREDBG_int);
         end
     end
 
@@ -408,19 +418,22 @@ module uncore #(
                     HSELRam_DD    ? HRDATA_RAM_D      :
                     HSELEXTD      ? HRDATAEXT         :
                     HSELBootRomD  ? HRDATA_BOOTROM    :
-                    HSELBRIDGED   ? HRDATA_BRIDGE     : '0;
+                    HSELBRIDGED   ? HRDATA_BRIDGE     :
+                    HSELCOREDBGD  ? HRDATACOREDBG     : '0;
 
     assign HREADYOUT = HSELRam_ID    ? HREADYOUT_RAM_I   :
                        HSELRam_DD    ? HREADYOUT_RAM_D   :
                        HSELEXTD      ? HREADYEXT         :
                        HSELBootRomD  ? HREADYOUT_BOOTROM :
                        HSELBRIDGED   ? HREADYOUT_BRIDGE  :
+                       HSELCOREDBGD  ? HREADYCOREDBG     :
                        HSELNoneD     ? 1'b1 : 1'b1;
 
     assign HRESP = HSELRam_ID    ? HRESP_RAM_I    :
                    HSELRam_DD    ? HRESP_RAM_D    :
                    HSELEXTD      ? HRESPEXT       :
                    HSELBootRomD  ? HRESP_BOOTROM  :
-                   HSELBRIDGED   ? HRESP_BRIDGE   : 1'b0;
+                   HSELBRIDGED   ? HRESP_BRIDGE   :
+                   HSELCOREDBGD  ? HRESPCOREDBG   : 1'b0;
 
 endmodule

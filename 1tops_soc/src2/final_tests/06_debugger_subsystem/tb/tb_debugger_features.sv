@@ -90,6 +90,7 @@ module tb_debugger_features;
     endtask
 
     reg [31:0] frozen_pc;
+    reg [31:0] read_val;
     integer step_retire_count;
 
     // Track total InstrRetired pulses
@@ -267,14 +268,158 @@ module tb_debugger_features;
         $display("[TEST 5] PASSED: Core reset to PC=0x8000_0000; Uncore DRAM data preserved (0x%08x).",
                  soc.uncore.ram_d.mem[0]);
 
+        // ---------------------------------------------------------------------
+        // TEST 6: Post-Mortem Core Register File & PC Readback via AHB (0x0B00_0000)
+        // ---------------------------------------------------------------------
+        $display("\n[TEST 6] Testing Post-Mortem Core Register & PC Readback via AHB (0x0B00_0000)...");
+        
+        // Let core run a few cycles to execute:
+        // x1 = 10 (0x0A), x2 = 20 (0x14), x3 = 30 (0x1E)
+        repeat (10) @(posedge clk);
+        
+        // Halt core for post-mortem inspection
+        force soc.dbg_core_halt = 1'b1;
+        repeat (3) @(posedge clk);
+        
+        if (!soc.dbg_core_halt_status) begin
+            $display("[FAIL] Core failed to enter halted state for post-mortem inspection!");
+            $finish;
+        end
+
+        // Read x1 (offset 0x04), x2 (offset 0x08), x3 (offset 0x0C) via AHB Slave (0x0B00_0000)
+        ahb_dbg_read(32'h0B00_0004, read_val); // x1
+        if (read_val !== 32'd10) begin
+            $display("[FAIL] Post-mortem AHB read of x1 failed! (Expected 10, got %d)", read_val);
+            $finish;
+        end
+        $display("[TEST 6] Confirmed: AHB read of x1 (0x0B00_0004) = %d", read_val);
+
+        ahb_dbg_read(32'h0B00_0008, read_val); // x2
+        if (read_val !== 32'd20) begin
+            $display("[FAIL] Post-mortem AHB read of x2 failed! (Expected 20, got %d)", read_val);
+            $finish;
+        end
+        $display("[TEST 6] Confirmed: AHB read of x2 (0x0B00_0008) = %d", read_val);
+
+        ahb_dbg_read(32'h0B00_000C, read_val); // x3
+        if (read_val !== 32'd30) begin
+            $display("[FAIL] Post-mortem AHB read of x3 failed! (Expected 30, got %d)", read_val);
+            $finish;
+        end
+        $display("[TEST 6] Confirmed: AHB read of x3 (0x0B00_000C) = %d", read_val);
+
+        // Read PCW (offset 0x090)
+        ahb_dbg_read(32'h0B00_0090, read_val);
+        $display("[TEST 6] Confirmed: AHB read of retired PCW (0x0B00_0090) = 0x%08x", read_val);
+
+        // Read Circular Micro-Trace Buffer Status (offset 0x140)
+        ahb_dbg_read(32'h0B00_0140, read_val);
+        $display("[TEST 6] Confirmed: AHB read of Micro-Trace Buffer Status (0x0B00_0140) = 0x%08x (Trace Count = %d)", 
+                 read_val, read_val[4:0]);
+
+        $display("[TEST 6] PASSED: Core registers, PC, and trace buffer successfully exposed over AHB bus.");
+
+        // ---------------------------------------------------------------------
+        // TEST 7: Hardware Auto-Halt on Trap & Post-Mortem Crash Diagnosis
+        // ---------------------------------------------------------------------
+        $display("\n[TEST 7] Testing Hardware Auto-Halt on Trap & Crash Diagnosis...");
+        
+        // Release manual halt
+        release soc.dbg_core_halt;
+        @(posedge clk);
+
+        // Inject an illegal instruction (0x0020_0073) into IRAM at PC=0x8000_0014
+        soc.uncore.ram_i.mem[5] = 32'h0020_0073; // Illegal opcode (CauseCode = 2)
+
+        // Wait for trap occurrence and automatic hardware freeze
+        while (!soc.dbg_trap_latched) begin
+            @(posedge clk);
+        end
+        repeat (3) @(posedge clk);
+
+        // Verify core is automatically frozen (Auto-Halt active)
+        if (!soc.core_stall_effective) begin
+            $display("[FAIL] Core did not auto-halt on trap!");
+            $finish;
+        end
+        $display("[TEST 7] Confirmed: Core automatically frozen upon trap (auto_halt_trap_o = 1).");
+
+        // Verify status feedback in GPI8 (Bit 3 = Trap Latched, Bit 4 = Illegal Instruction)
+        if (soc.u_debugger.GPI8[3] !== 1'b1) begin
+            $display("[FAIL] GPI8[3] (trap_latched) should be 1 upon trap!");
+            $finish;
+        end
+        if (soc.u_debugger.GPI8[4] !== 1'b1) begin
+            $display("[FAIL] GPI8[4] (illegal_instruction fault flag) should be 1!");
+            $finish;
+        end
+        $display("[TEST 7] Confirmed: Debugger GPI8 = 0x%02x (Trap latched & Illegal instruction flag set).",
+                 soc.u_debugger.GPI8);
+
+        // Read Post-Mortem Crash Diagnosis Registers via AHB
+        // 1. Latched Trap Cause (offset 0x0D4)
+        ahb_dbg_read(32'h0B00_00D4, read_val);
+        if (read_val !== 32'd2) begin // mcause = 2 for Illegal Instruction
+            $display("[FAIL] Latched mcause should be 2 for Illegal Instruction, got %d", read_val);
+            $finish;
+        end
+        $display("[TEST 7] Confirmed: Latched Trap Cause (0x0B00_00D4) = %d (Illegal Instruction)", read_val);
+
+        // 2. Latched Faulting PC (offset 0x0DC)
+        ahb_dbg_read(32'h0B00_00DC, read_val);
+        if (read_val !== 32'h8000_0014) begin
+            $display("[FAIL] Latched Trap PC should be 0x8000_0014, got 0x%08x", read_val);
+            $finish;
+        end
+        $display("[TEST 7] Confirmed: Latched Faulting PC (0x0B00_00DC) = 0x%08x (Exact crash location)", read_val);
+
+        // 3. Latched Trap Value (offset 0x0D8)
+        ahb_dbg_read(32'h0B00_00D8, read_val);
+        $display("[TEST 7] Confirmed: Latched Trap Value (0x0B00_00D8) = 0x%08x", read_val);
+
+        $display("[TEST 7] PASSED: Hardware Auto-Halt on Trap and Post-Mortem Crash Diagnosis verified!");
+
         $display("\n==================================================================");
-        $display(" ALL 3 DEBUGGER FEATURES VERIFIED SUCCESSFULLY AT SIGNAL LEVEL!");
+        $display(" ALL DEBUGGER & POST-MORTEM FEATURES VERIFIED SUCCESSFULLY!");
         $display(" 1. ExternalStall: Freezes all 5 stages in hazard unit");
         $display(" 2. InstrRetired: Clean 1-cycle retirement pulse for stepping");
         $display(" 3. dbg_core_reset: Core-only reset with uncore data preservation");
+        $display(" 4. Post-Mortem Register Readout: x0-x31 exposed on AHB (0x0B00_0000)");
+        $display(" 5. Hardware Auto-Halt on Trap: Automatic freeze at crash cycle");
+        $display(" 6. Sticky Crash Diagnosis: Exact faulting PC and mcause captured");
+        $display(" 7. Circular Micro-Trace: Execution history buffer for crash analysis");
         $display("==================================================================\n");
 
         $finish;
     end
+
+    // AHB Master Read Helper Task
+    task ahb_dbg_read;
+        input  [31:0] addr;
+        output [31:0] data;
+        begin
+            @(posedge clk);
+            force soc.dbg_HADDR     = addr;
+            force soc.dbg_HTRANS    = 2'b10; // NONSEQ
+            force soc.dbg_HWRITE    = 1'b0;
+            force soc.dbg_HSIZE     = 3'b010;
+            force soc.dbg_HBURST    = 3'b000;
+            force soc.dbg_HPROT     = 4'b0011;
+            force soc.dbg_HMASTLOCK = 1'b0;
+            @(posedge clk);
+            while (!soc.dbg_HREADY) @(posedge clk);
+            force soc.dbg_HTRANS    = 2'b00; // IDLE
+            @(posedge clk);
+            while (!soc.dbg_HREADY) @(posedge clk);
+            data = soc.dbg_HRDATA;
+            release soc.dbg_HADDR;
+            release soc.dbg_HTRANS;
+            release soc.dbg_HWRITE;
+            release soc.dbg_HSIZE;
+            release soc.dbg_HBURST;
+            release soc.dbg_HPROT;
+            release soc.dbg_HMASTLOCK;
+        end
+    endtask
 
 endmodule

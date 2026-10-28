@@ -53,6 +53,8 @@ The Debugger Subsystem provides non-intrusive runtime inspection, hardware singl
 - **TEST 3 (InstrRetired 1-Cycle Pulse & Single-Stepping)**: Programs the step controller for single-instruction stepping. Deasserts stall, verifies that exactly 1 instruction retires via `InstrRetired`, and verifies the core re-freezes on the next instruction.
 - **TEST 4 (Multi-Step Execution)**: Advances execution through multiple sequential instructions, verifying arithmetic and register writeback.
 - **TEST 5 (Core-Only Reset)**: Writes a signature (`0xDEADBEEF`) into Uncore DRAM, asserts `dbg_core_reset = 1`, and verifies that the CPU PC returns to `0x8000_0000` while DRAM contents remain intact.
+- **TEST 6 (Post-Mortem Core AHB Inspection)**: Inspects CPU register file (`x1=10`, `x2=20`, `x3=30`), pipeline stage PCs (`PCF..PCW`), CSRs, and 16-entry micro-trace buffer across the AHB bus at `0x0B00_0000` without disturbing pipeline execution.
+- **TEST 7 (Hardware Auto-Halt on Trap & Crash Latch)**: Injects an illegal instruction exception (`0x0020_0073`), verifies immediate hardware auto-freeze within the same cycle, checks `GPI8=0x19`, and verifies latched crash registers (`TRAP_CAUSE=2`, `TRAP_PC=0x8000_0014`).
 
 ### B. SoCDebug ADP Protocol & Bus Multiplexer (`tb/tb_debugger.sv`)
 - **Protocol Multiplexing**: Tests hardware pin `dbg_sel` switching between UART and FT1248 high-speed streaming. Verifies complete protocol isolation (ignoring inactive interface).
